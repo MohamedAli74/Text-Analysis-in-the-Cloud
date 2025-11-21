@@ -1,2 +1,3 @@
-dsp1\Main.class
-LocalApplication.class
+dsp1/SQSMeassage.class
+dsp1/LocalApplication/LocalApplication.class
+dsp1/LocalApplication/LocalTesting.class

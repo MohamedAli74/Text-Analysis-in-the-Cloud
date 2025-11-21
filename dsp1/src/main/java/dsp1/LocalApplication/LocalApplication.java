@@ -78,9 +78,7 @@ public class LocalApplication{
 
         //upload the input file to S3
         String s3KeyName = Paths.get(inputFileName).getFileName().toString();
-        /* 
         uploadFileToS3(S3_BUCKET_NAME, s3KeyName);
-        */
     }
 
     public static List<String> listManagerInstances() {
@@ -133,10 +131,7 @@ public class LocalApplication{
         }
     }
 
-    public static void uploadFileToS3(String bucketName, String keyName, File REMOVE_THIS) {//
-        //TODO: check that we are handling the File parsing correctly
-        inputFile = REMOVE_THIS;//NOTE!!
-        inputFileName = "name";//NOTE!!
+    public static void uploadFileToS3(String bucketName, String keyName) {
         if (!inputFile.exists()) {
             throw new IllegalArgumentException("FATAL: Input file not found" + inputFileName);
         }
