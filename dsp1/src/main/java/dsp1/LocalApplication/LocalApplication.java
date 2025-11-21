@@ -8,6 +8,9 @@ import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
 import software.amazon.awssdk.services.s3.model.NoSuchBucketException;
+import software.amazon.awssdk.services.sqs.model.SendMessageRequest;
+import software.amazon.awssdk.services.sqs.model.GetQueueUrlRequest;
+import dsp1.AWS;
 
 import java.nio.file.Paths;
 import java.io.File;
@@ -31,6 +34,7 @@ public class LocalApplication{
     private static String outputFileName;
     private static int workersToFileRation;
     private static boolean terminate;
+    
     //AWS clients
     private static final Region region = Region.US_EAST_1;
     private static final String MANAGER_TAG_KEY = "Role";
@@ -51,34 +55,55 @@ public class LocalApplication{
     private static final SqsClient ManagerLocalSQS = SqsClient.builder()//for getting messages from the manager
             .region(region)
             .build();
+    
+/////////////////////////////////////////////SQS///////////////////////////////////////
 
+    public static void sendS3PathToManager(String bucketName, String keyName) {
 
-    public void main(String args[]) {
-        //parse the arguments
-        this.inputFile = getFileFromResources(args[0]);
-        this.inputFileName = args[0];
-        this.outputFileName = args[1];
-        this.workersToFileRation = Integer.parseInt(args[2]);
-        if(args.length == 4){
-            this.terminate = args[3].equals("terminate");
-        }
+        String queueUrl = getLocalToManagerQueueUrl();
+        String s3Path = "s3://" + bucketName + "/" + keyName;
 
-        //assure that the S3 buckcet exists
-        CheckPucketExistence();
+        SendMessageRequest sendMsg = SendMessageRequest.builder()
+                .queueUrl(queueUrl)
+                .messageBody(s3Path)
+                .build();
 
-        //assure that a manager node exists
+        AWS.getInstance().getSqs().sendMessage(sendMsg);
+
+        System.out.println("Sent message to Manager: " + s3Path);
+    }
+
+    public static void createLocalToManagerQueue() {
+        AWS.getInstance().createSqsQueue("LocalToManagerQueue");
+        System.out.println(" Queue LocalToManagerQueue created.");
+    }
+
+    public static String getLocalToManagerQueueUrl() {
+        return AWS.getInstance().getSqs().getQueueUrl(
+                GetQueueUrlRequest.builder()
+                        .queueName("LocalToManagerQueue")
+                        .build()
+        ).queueUrl();
+    }
+////////////////////////////////////////////////CREATE MANAGER QUEUE//////////////////////////////////////
+
+    public static String getOrCreateManagerInstance() {
+        AWS aws = AWS.getInstance();
         List<String> managers = listManagerInstances();
-        int numberOfManagers = managers.size();
-        if(numberOfManagers == 0){
-            //TODO: initiate manager instance  
-        }
-        else if(numberOfManagers > 1){
-            //TODO: check what to do if more than one manager exists
+
+        if (!managers.isEmpty()) {
+            String existing = managers.get(0);
+            System.out.println(" Manager instance already running: " + existing);
+            return existing;
         }
 
-        //upload the input file to S3
-        String s3KeyName = Paths.get(inputFileName).getFileName().toString();
-        uploadFileToS3(S3_BUCKET_NAME, s3KeyName);
+        System.out.println(" No manager found. Launching new one...");
+
+        String script = ""; // 
+        String newId = aws.createEC2(script, "Manager", 1);
+
+        System.out.println(" Launched Manager with ID: " + newId);
+        return newId;
     }
 
     public static List<String> listManagerInstances() {
@@ -110,6 +135,24 @@ public class LocalApplication{
         }
         return instanceIds;
     }
+    
+    
+    //////////////////////////////////////////AWS S3 Methods//////////////////////////////////////
+
+    public static File getFileFromResources(String fileName) {
+        URL resource = LocalApplication.class.getClassLoader().getResource(fileName);
+        
+        if (resource == null) {
+            throw new IllegalArgumentException("File not found in resources folder: " + fileName);
+        }
+        
+        try {
+            return new File(resource.toURI());
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to load file from resources", e);
+        }
+    }
+    
     public static void CheckPucketExistence() {
         try {
             s3.headBucket(HeadBucketRequest.builder().bucket(S3_BUCKET_NAME).build());
@@ -142,17 +185,40 @@ public class LocalApplication{
         s3.putObject(putObject, RequestBody.fromFile(inputFile));
     }
 
-    public File getFileFromResources(String fileName) {
-        URL resource = getClass().getClassLoader().getResource(fileName);
 
-        if (resource == null) {
-            throw new IllegalArgumentException("File not found in resources folder: " + fileName);
+/////////////////////////////////////////MAIN//////////////////////////////////////////////
+        public static void main(String args[]) {
+
+        if (args.length < 3) {
+            System.err.println(" LocalApplication <inputFile> <outputFile> <workers> [terminate]");
+            return;
         }
 
-        try {
-            return new File(resource.toURI());
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to load file from resources", e);
+        //parse the arguments
+        inputFile = getFileFromResources(args[0]);
+        inputFileName = args[0];
+        outputFileName = args[1];
+        workersToFileRation = Integer.parseInt(args[2]);
+        if(args.length == 4){
+            terminate = args[3].equals("terminate");
         }
+
+        //assure that the S3 buckcet exists
+        CheckPucketExistence();
+
+        //assure that a manager node exists
+        List<String> managers = listManagerInstances();
+        int numberOfManagers = managers.size();
+
+        String managerId = getOrCreateManagerInstance();
+
+        //upload the input file to S3
+        String s3KeyName = Paths.get(inputFileName).getFileName().toString();
+        uploadFileToS3(S3_BUCKET_NAME, s3KeyName);
+
+        //create the SQS queue to communicate with the manager
+        createLocalToManagerQueue();
+        sendS3PathToManager(S3_BUCKET_NAME, s3KeyName);
     }
+
 }
