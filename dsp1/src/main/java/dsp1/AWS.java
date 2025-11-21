@@ -78,8 +78,8 @@ public class AWS {
         String instanceId = response.instances().get(0).instanceId();
 
        Tag tag = Tag.builder()
-        .key("Role")//NOTE
-        .value("Manager")//NOTE 
+        .key("Role")
+        .value(tagName)
         .build();
 
         CreateTagsRequest tagRequest = CreateTagsRequest.builder()
