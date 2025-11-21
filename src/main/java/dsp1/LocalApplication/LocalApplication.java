@@ -78,7 +78,7 @@ public class LocalApplication {
 
         System.out.println(" No manager found. Launching new one...");
 
-        String script = ""; // add startup script
+        String script = ""; // 
         String newId = aws.createEC2(script, "Manager", 1);
 
         System.out.println(" Launched Manager with ID: " + newId);
