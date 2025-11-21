@@ -1,143 +1,183 @@
 package dsp1.LocalApplication;
 
-import software.amazon.awssdk.core.sync.RequestBody;
+import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.ec2.Ec2Client;
-import software.amazon.awssdk.services.ec2.model.DescribeInstancesRequest;
-import software.amazon.awssdk.services.ec2.model.DescribeInstancesResponse;
-import software.amazon.awssdk.services.ec2.model.Filter;
-import software.amazon.awssdk.services.ec2.model.Instance;
-import software.amazon.awssdk.services.ec2.model.InstanceStateName;
-import software.amazon.awssdk.services.ec2.model.Reservation;
 import software.amazon.awssdk.services.s3.S3Client;
-import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+import software.amazon.awssdk.services.sqs.SqsClient;
+import software.amazon.awssdk.services.ec2.model.*;
+import software.amazon.awssdk.core.sync.RequestBody;
 
+import software.amazon.awssdk.services.s3.model.*;
+import software.amazon.awssdk.services.sqs.model.*;
+
+import java.nio.file.Paths;
 import java.io.File;
+import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
 
 public class LocalApplication {
 
-/////input 
-    private String inputFilePath;
-    private String outputFileName;
-    private int workersToFileRation;
-    private boolean terminate;
+    // args
+    private static File inputFile;
+    private static String inputFileName;
+    private static String outputFileName;
+    private static int workersToFileRation;
+    private static boolean terminate;
 
+    // AWS config
+    private static final Region region = Region.US_EAST_1;
+    public static final String MANAGER_TAG_KEY = "Role";
+    public static final String MANAGER_TAG_VALUE = "Manager";
+    public static final String S3_BUCKET_NAME = "dsp-assignment1-2025111913";
 
+    private static final Ec2Client ec2 = Ec2Client.builder().region(region).build();
+    private static final S3Client s3 = S3Client.builder().region(region).build();
 
-    private static final String MANAGER_TAG_KEY = "Role";
-    private static final String MANAGER_TAG_VALUE = "Manager";
+    //-------------------------------------------------------- LIST MANAGER and check if it is exist--------------------------------------------------------
+    public static List<String> listManagerInstances() {
+        List<String> instanceIds = new ArrayList<>();
 
-
-
-    // AWS instance
-    private final AWS aws;
-    private final Ec2Client ec2;
-
-    // constructor
-    public LocalApplication() {
-        this.aws = AWS.getInstance();
-        this.ec2 = Ec2Client.builder()
-                                      .region(AWS.region2)  
-                                                           .build();
-    }
-   ///////////////////////////////////////////////// manger handle //////////////////////////////////////////////////
-//search in all instances for manger
-    private List<Instance> listManagerInstances() {
-
-        List<Instance> instances = new ArrayList<>();
         Filter tagFilter = Filter.builder()
-                                        .name("tag:" + MANAGER_TAG_KEY)
-                                                           .values(MANAGER_TAG_VALUE)
-                                                                                .build();
+                .name("tag:" + MANAGER_TAG_KEY)
+                .values(MANAGER_TAG_VALUE)
+                .build();
 
-        DescribeInstancesRequest request = DescribeInstancesRequest.builder().filters(tagFilter).build();
+        DescribeInstancesRequest request = DescribeInstancesRequest.builder()
+                .filters(tagFilter)
+                .build();
+
         DescribeInstancesResponse response = ec2.describeInstances(request);
 
-        //go about all instances and make list 
-           for (Reservation reservation : response.reservations()) {
-    for (Instance instance : reservation.instances()) {
-            String id = instance.instanceId();
-            System.out.println("Found  Manager instance: " + id + " state=" + instance.state().name());
-            instances.add(instance);
-        
-    }
-}
-             return instances;
+        for (Reservation res : response.reservations()) {
+            for (Instance instance : res.instances()) {
 
-        
-                   }
+                String state = instance.state().nameAsString();
+                if (state.equals("terminated") || state.equals("stopped") || state.equals("shutting-down")) continue;
 
-private String ensureManagerRunning() {
-    List<Instance> managers = listManagerInstances();
+                System.out.printf("Found Manager: %s (%s)%n",
+                        instance.instanceId(), state);
 
-    if (managers.isEmpty()) {
-        String userDataScript = ""; 
+                instanceIds.add(instance.instanceId());
+            }
+        }
 
-        String newManagerId = aws.createEC2(userDataScript, "Manager", 1);
-        System.out.println("No managers found. Started new Manager with id: " + newManagerId);
-        return newManagerId;
+        return instanceIds;
     }
 
-    Instance manager = managers.get(0);
-    String id = manager.instanceId();
-    System.out.println("Using existing Manager with id: " + id +
-                       " and state=" + manager.state().name());
-    return id;
-}
-//////////////////////////////////////////////////handel input /////////////////////////////////////////////
-  private void parseArgs(String[] args) {
-    if (args.length < 3) {
-        throw new IllegalArgumentException(
-                "false input");
+
+    public static String getOrCreateManagerInstance() {
+        AWS aws = AWS.getInstance();
+        List<String> managers = listManagerInstances();
+
+        if (!managers.isEmpty()) {
+            String existing = managers.get(0);
+            System.out.println(" Manager instance already running: " + existing);
+            return existing;
+        }
+
+        System.out.println(" No manager found. Launching new one...");
+
+        String script = ""; // add startup script
+        String newId = aws.createEC2(script, "Manager", 1);
+
+        System.out.println(" Launched Manager with ID: " + newId);
+        return newId;
     }
 
-    this.inputFilePath = args[0];
-    this.outputFileName = args[1];
-    this.workersToFileRation = Integer.parseInt(args[2]);
-    this.terminate = (args.length >= 4) && args[3].equalsIgnoreCase("terminate");
-}
 
-private String uploadInputToS3() {
+    //-------------------------------------------------------- uploud input to s3 -----------------------------------------------------------
+    public static void CheckPucketExistence() {
+        try {
+            s3.headBucket(HeadBucketRequest.builder().bucket(S3_BUCKET_NAME).build());
+            System.out.println("Bucket already exists: " + S3_BUCKET_NAME);
 
-    aws.createBucketIfNotExists(aws.bucketName);
-
-    String fileName = new File(this.inputFilePath).getName();  
-    String keyName = "inputs/" + fileName;
-    S3Client s3 = S3Client.builder()
-                       .region(AWS.region1)
-                                     .build();
-
-    File f = new File(this.inputFilePath);
-    if (!f.exists()) {
-        throw new IllegalArgumentException("Input file not found: " + this.inputFilePath);
+        } catch (NoSuchBucketException e) {
+            System.out.println("Bucket not found. Creating...");
+            s3.createBucket(CreateBucketRequest.builder().bucket(S3_BUCKET_NAME).build());
+            System.out.println("Bucket created.");
+        }
     }
 
-    s3.putObject(
-            PutObjectRequest.builder()
-                    .bucket(aws.bucketName)
-                             .key(keyName)
-                                    .build(),
-                                           RequestBody.fromFile(f)
-    );
 
-    System.out.println("Uploaded " + this.inputFilePath +
-            " to s3://" + aws.bucketName + "/" + keyName);
+    public static void uploadFileToS3(String bucketName, String keyName, File file) {
+        PutObjectRequest putObject = PutObjectRequest.builder()
+                .bucket(bucketName).key(keyName).build();
 
-    return keyName;
-}
+        s3.putObject(putObject, RequestBody.fromFile(file));
+        System.out.println(" File uploaded: " + keyName);
+    }
 
-///////////////////////////////////main/////////////////////////////////////////////////////////
+
+    public static File getFileFromResources(String fileName) {
+        URL resource = LocalApplication.class.getClassLoader().getResource(fileName);
+
+        if (resource == null)
+            throw new IllegalArgumentException("File NOT FOUND in resources: " + fileName);
+
+        try {
+            return new File(resource.toURI());
+        } catch (Exception e) {
+            throw new RuntimeException("Error loading resource file", e);
+        }
+    }
+
+
+    //-------------------------------------------------------- SQS  message ---------------------------------------------------------------
+    public static void createLocalToManagerQueue() {
+        AWS.getInstance().createSqsQueue("LocalToManagerQueue");
+        System.out.println(" Queue LocalToManagerQueue created.");
+    }
+
+
+    public static String getLocalToManagerQueueUrl() {
+        return AWS.getInstance().getSqs().getQueueUrl(
+                GetQueueUrlRequest.builder()
+                        .queueName("LocalToManagerQueue")
+                        .build()
+        ).queueUrl();
+    }
+
+
+    public static void sendS3PathToManager(String bucketName, String keyName) {
+
+        String queueUrl = getLocalToManagerQueueUrl();
+        String s3Path = "s3://" + bucketName + "/" + keyName;
+
+        SendMessageRequest sendMsg = SendMessageRequest.builder()
+                .queueUrl(queueUrl)
+                .messageBody(s3Path)
+                .build();
+
+        AWS.getInstance().getSqs().sendMessage(sendMsg);
+
+        System.out.println("Sent message to Manager: " + s3Path);
+    }
+
+
+    //-------------------------------------------------------- MAIN ---------------------------------------------------------------
     public static void main(String[] args) {
-    LocalApplication app = new LocalApplication();
-    app.parseArgs(args);
-    String managerId = app.ensureManagerRunning();
-    String key = app.uploadInputToS3();
 
-}
+        if (args.length < 3) {
+            System.err.println(" LocalApplication <inputFile> <outputFile> <workers> [terminate]");
+            return;
+        }
 
+        inputFileName = args[0];
+        outputFileName = args[1];
+        workersToFileRation = Integer.parseInt(args[2]);
+        terminate = (args.length == 4 && args[3].equals("terminate"));
 
+        inputFile = getFileFromResources(inputFileName);
+        CheckPucketExistence();
 
+        String managerId = getOrCreateManagerInstance();
 
+        String key = Paths.get(inputFileName).getFileName().toString();
+        uploadFileToS3(S3_BUCKET_NAME, key, inputFile);
 
+        createLocalToManagerQueue();
+        sendS3PathToManager(S3_BUCKET_NAME, key);
+
+    }
 }

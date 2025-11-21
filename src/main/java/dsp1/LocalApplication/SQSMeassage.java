@@ -1,4 +1,4 @@
-package dsp1;
+package dsp1.LocalApplication;
 import java.util.HashMap;
 
 public class SQSMeassage {

@@ -25,9 +25,13 @@ public class AWS {
     private static final AWS instance = new AWS();
 
     private AWS() {
-        s3 = S3Client.builder().region(region1).build();
-        sqs = SqsClient.builder().region(region1).build();
+        s3 = S3Client.builder().region(region2).build();
+        sqs = SqsClient.builder().region(region2).build();
         ec2 = Ec2Client.builder().region(region2).build();
+    }
+
+    public SqsClient getSqs() {
+        return sqs;
     }
 
     public static AWS getInstance() {
@@ -73,10 +77,10 @@ public class AWS {
 
         String instanceId = response.instances().get(0).instanceId();
 
-        Tag tag = Tag.builder()
-                .key("Name")
-                .value(tagName)
-                .build();
+       Tag tag = Tag.builder()
+        .key("Role")
+        .value("Manager")
+        .build();
 
         CreateTagsRequest tagRequest = CreateTagsRequest.builder()
                 .resources(instanceId)
