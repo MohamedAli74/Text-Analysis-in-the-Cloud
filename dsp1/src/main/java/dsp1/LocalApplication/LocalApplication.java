@@ -45,7 +45,6 @@ public class LocalApplication{
     private static final String MANAGER_TAG_KEY = "Role";
     private static final String MANAGER_TAG_VALUE = "Manager";
     public static final String S3_BUCKET_NAME = "dsp-assignment1-2025111913";
-    private static final String MANAGER_TO_LOCAL = "ManagerToLocalQueue";
     private static final String mytaskid=UUID.randomUUID().toString();
 
 
@@ -76,8 +75,6 @@ public static String getQueueUrl(String queueName) {
 
  public static void sendJobToManager(String bucketName, String keyName) {
 
-    String queueUrl = getQueueUrl(LocalManagerQueueName);
-
     String messageBody =
         "{"
             + "\"type\":\"newTask\","
@@ -91,7 +88,7 @@ public static String getQueueUrl(String queueName) {
         + "}";
     
     SendMessageRequest sendMsg = SendMessageRequest.builder()
-            .queueUrl(queueUrl)
+            .queueUrl(LocalManagerQueueURL)
             .messageBody(messageBody)
             .build();
 
@@ -103,7 +100,6 @@ public static String getQueueUrl(String queueName) {
 
 /////////////////////////////////////////AWS EC2 Methods//////////////////////////////////////
 public static String getOrCreateManagerInstance() {
-    AWS aws = AWSinstance;
     List<String> managers = listManagerInstances();
     
     
@@ -115,19 +111,18 @@ public static String getOrCreateManagerInstance() {
     
     System.out.println(" No manager found. Launching new one...");
     
+    uploadManagerJar(S3_BUCKET_NAME);
     String userDataScript = """
-                         #!/bin/bash
-                        sudo yum update -y
-                         sudo yum install -y java-17-amazon-corretto maven git
-                         cd /home/ec2-user/
-                         git clone https://github.com/MohamedAli74/Text-Analysis-in-the-Cloud.git
-                         cd Text-Analysis-in-the-Cloud/dsp1
-                         mvn -q -DskipTests package
-                         nohup mvn -q exec:java -Dexec.mainClass="dsp1.ManagerApplication.ManagerApplication" > /home/ec2-user/manager.log 2>&1 &
-                          """;
+                         #!/bin/bash\n
+                         sudo yum update -y\n
+                         sudo yum install -y java-17-amazon-corretto\n
+                         mkdir -p /home/ec2-user/app\n
+                         aws s3 cp s3://" + s3BucketName + "/manager.jar /home/ec2-user/app/manager.jar\n
+                         nohup java -jar /home/ec2-user/app/manager.jar > /home/ec2-user/app/log.txt 2>&1 &\n
+                         """;
 
 String script = Base64.getEncoder().encodeToString(userDataScript.getBytes());
-    String newId = aws.createEC2(script, "Manager", 1);
+    String newId = AWSinstance.createEC2(script, "Manager", 1);
     
     System.out.println(" Launched Manager with ID: " + newId);
     return newId;
@@ -166,7 +161,38 @@ public static List<String> listManagerInstances() {
     
     //////////////////////////////////////////AWS S3 Methods//////////////////////////////////////
     
-   
+    public static void uploadManagerJar(String bucketName) {
+        System.out.println("Uploading Manager JAR to S3...");
+
+        String localJarPath = "target/dsp1-1.0-SNAPSHOT.jar"; 
+        File jarFile = new File(localJarPath);
+
+        // 2. Verify the JAR exists
+        if (!jarFile.exists()) {
+            System.err.println("ERROR: JAR file not found at: " + jarFile.getAbsolutePath());
+            System.err.println("run 'mvn clean package' first");
+            System.exit(1); // Stop execution because Manager cannot run without code
+        }
+
+        String s3Key = "manager.jar";
+
+        // 4. Upload
+        try {
+            PutObjectRequest putOb = PutObjectRequest.builder()
+                    .bucket(bucketName)
+                    .key(s3Key)
+                    .build();
+
+            s3.putObject(putOb, RequestBody.fromFile(jarFile));
+            
+            System.out.println("✅ Manager JAR uploaded successfully to: s3://" + bucketName + "/" + s3Key);
+            
+        } catch (Exception e) {
+            System.err.println("Failed to upload JAR: " + e.getMessage());
+            throw new RuntimeException(e);
+        }
+    }
+
     public static File getFileFromResources(String fileName) {
         URL resource = LocalApplication.class.getClassLoader().getResource(fileName);
         
@@ -214,8 +240,7 @@ public static List<String> listManagerInstances() {
     }
 
 //-----------------------for responses from manager------------------------------
-public static Message receiveMessage(String queueName) {
-    String queueUrl = getQueueUrl(queueName);
+public static Message receiveMessage(String queueUrl) {
     ReceiveMessageRequest request = ReceiveMessageRequest.builder()
             .queueUrl(queueUrl)
             .maxNumberOfMessages(1)
@@ -252,10 +277,9 @@ public static Message receiveMessage(String queueName) {
         CheckPucketExistence();
 
         //assure that a manager node exists
-        List<String> managers = listManagerInstances();
-        int numberOfManagers = managers.size();
-
+        
         String managerId = getOrCreateManagerInstance();
+
 
         ManagerLocalQueueURL = getQueueUrl(ManagerLocalQueueName);
         LocalManagerQueueURL = getQueueUrl(LocalManagerQueueName);
@@ -266,24 +290,19 @@ public static Message receiveMessage(String queueName) {
         sendJobToManager(S3_BUCKET_NAME, s3KeyName);
 
 
-    while (true) {
-        Message msg = receiveMessage(MANAGER_TO_LOCAL);
-        
-        if (msg != null) {
-            String body = msg.body();
-            System.out.println("Received message from Manager: " + body);
-        if (body.contains("\"taskId\":\"" + mytaskid + "\"")) {
-            System.out.println(" Task " + mytaskid + " completed.");
-        }
-            // TODO :  process the message (e.g., download output file from S3)******************
-
-        } else {
-
-        try { Thread.sleep(2000); } catch (Exception e) {}
+        while (true) {
+            Message msg = receiveMessage(ManagerLocalQueueURL);
+            
+            if (msg != null) {
+                String body = msg.body();
+                System.out.println("Received message from Manager: " + body);
+            if (body.contains("\"taskId\":\"" + mytaskid + "\"")) {
+                System.out.println(" Task " + mytaskid + " completed.");
+            }
+                // TODO :  process the message (e.g., download output file from S3)******************
+            } else {
+                try { Thread.sleep(2000); } catch (Exception e) {}
+            }
+        } 
     }
-
-    }
-        
-    }
-
 }

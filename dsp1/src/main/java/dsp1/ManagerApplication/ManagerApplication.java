@@ -5,12 +5,18 @@ import org.json.JSONObject;
 import software.amazon.awssdk.services.sqs.model.*;
 
 public class ManagerApplication {
-
+        
     private static final String LOCAL_TO_MANAGER = "LocalToManagerQueue";
+    private static String LocalManagerQueueURL;
     private static final String MANAGER_TO_LOCAL = "ManagerToLocalQueue";
+    private static String ManagerLocalQueueURL;
+    
+    private static final String WORKERS_TO_MANAGER = "LocalToManagerQueue";
+    private static String WorkersManagerQueueURL;
+    private static final String MANAGER_TO_WORKERS = "ManagerToLocalQueue";
+    private static String ManagerWorkersQueueURL;
 
     private static final AWS AWSinstance = AWS.getInstance();
-
 
 
     public static void createQueue(String queueName) {
@@ -26,10 +32,10 @@ public class ManagerApplication {
         ).queueUrl();
     }
 
-    public static Message receiveMessage(String queueName) {
+    public static Message receiveMessage(String queueURL) {
         ReceiveMessageRequest req =
                 ReceiveMessageRequest.builder()
-                        .queueUrl(getQueueUrl(queueName))
+                        .queueUrl(queueURL)
                         .maxNumberOfMessages(1)
                         .waitTimeSeconds(10)
                         .build();
@@ -70,14 +76,21 @@ public class ManagerApplication {
 
         // 1) Create queues
         createQueue(LOCAL_TO_MANAGER);
+        LocalManagerQueueURL = getQueueUrl(LOCAL_TO_MANAGER);
         createQueue(MANAGER_TO_LOCAL);
+        ManagerLocalQueueURL = getQueueUrl(MANAGER_TO_LOCAL);
+        
+        createQueue(WORKERS_TO_MANAGER);
+        WorkersManagerQueueURL = getQueueUrl(WORKERS_TO_MANAGER);
+        createQueue(MANAGER_TO_WORKERS);
+        ManagerWorkersQueueURL = getQueueUrl(MANAGER_TO_WORKERS);
 
         System.out.println("Manager started. Waiting for messages...");
 
         while (true) {
 
             // 2) Receive message from LocalApps
-            Message msg = receiveMessage(LOCAL_TO_MANAGER);
+            Message msg = receiveMessage(LocalManagerQueueURL);
 
             if (msg == null)
                 continue;
