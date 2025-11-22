@@ -17,13 +17,13 @@ import java.nio.file.Paths;
 import java.io.File;
 
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
 
 
 import java.io.File; 
 import java.net.URL;
 
-import software.amazon.awssdk.services.ec2.model.DescribeInstancesRequest;
 import software.amazon.awssdk.services.s3.model.HeadBucketRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
@@ -67,8 +67,34 @@ public static String getQueueUrl(String queueName) {
         .build()
     ).queueUrl();
 }
-////////////////////////////////////////////////CREATE MANAGER QUEUE//////////////////////////////////////
 
+ public static void sendJobToManager(String bucketName, String keyName) {
+
+    String queueUrl = getQueueUrl(LocalManagerQueueName);
+   
+    String messageBody =
+        "{"
+            + "\"type\":\"newTask\","
+            + "\"s3Bucket\":\"" + bucketName + "\","
+            + "\"s3Key\":\"" + keyName + "\","
+            + "\"inputFile\":\"" + inputFileName + "\","
+            + "\"outputFile\":\"" + outputFileName + "\","
+            + "\"workers\":" + workersToFileRation + ","
+            + "\"terminate\":" + terminate
+        + "}";
+
+    SendMessageRequest sendMsg = SendMessageRequest.builder()
+            .queueUrl(queueUrl)
+            .messageBody(messageBody)
+            .build();
+
+    AWSinstance.getSqs().sendMessage(sendMsg);
+
+    System.out.println("Sent message to Manager: " + messageBody);
+}
+
+
+/////////////////////////////////////////AWS EC2 Methods//////////////////////////////////////
 public static String getOrCreateManagerInstance() {
     AWS aws = AWSinstance;
     List<String> managers = listManagerInstances();
@@ -82,7 +108,18 @@ public static String getOrCreateManagerInstance() {
     
     System.out.println(" No manager found. Launching new one...");
     
-    String script = ""; //NOTE: Add user data script if needed 
+    String userDataScript = """
+                         #!/bin/bash
+                        sudo yum update -y
+                         sudo yum install -y java-17-amazon-corretto maven git
+                         cd /home/ec2-user/
+                         git clone https://github.com/MohamedAli74/Text-Analysis-in-the-Cloud.git
+                         cd Text-Analysis-in-the-Cloud/dsp1
+                         mvn -q -DskipTests package
+                         nohup mvn -q exec:java -Dexec.mainClass="dsp1.ManagerApplication.ManagerApplication" > /home/ec2-user/manager.log 2>&1 &
+                          """;
+
+String script = Base64.getEncoder().encodeToString(userDataScript.getBytes());
     String newId = aws.createEC2(script, "Manager", 1);
     
     System.out.println(" Launched Manager with ID: " + newId);
@@ -122,23 +159,7 @@ public static List<String> listManagerInstances() {
     
     //////////////////////////////////////////AWS S3 Methods//////////////////////////////////////
     
-    public static void sendS3PathToManager(String bucketName, String keyName) {
-    
-        String queueUrl = getQueueUrl(LocalManagerQueueName);
-        String s3Path = "s3://" + bucketName + "/" + keyName;
-        String messageBody = "s3Path "+ s3Path + " outputFileName " + outputFileName + 
-                                                " workersToFileRation " + Integer.toString(workersToFileRation) +
-                                               " terminate " + Boolean.toString(terminate);
-    
-        SendMessageRequest sendMsg = SendMessageRequest.builder()
-                .queueUrl(queueUrl)
-                .messageBody(messageBody)
-                .build();
-    
-        AWSinstance.getSqs().sendMessage(sendMsg);
-    
-        System.out.println("Sent message to Manager: " + s3Path);
-    }
+   
     public static File getFileFromResources(String fileName) {
         URL resource = LocalApplication.class.getClassLoader().getResource(fileName);
         
@@ -218,8 +239,7 @@ public static List<String> listManagerInstances() {
         //upload the input file to S3
         String s3KeyName = Paths.get(inputFileName).getFileName().toString();
         uploadFileToS3(S3_BUCKET_NAME, s3KeyName);
-
-        sendS3PathToManager(S3_BUCKET_NAME, s3KeyName);
+        sendJobToManager(S3_BUCKET_NAME, s3KeyName);
         
         
     }

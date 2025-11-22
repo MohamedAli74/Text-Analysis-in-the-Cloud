@@ -28,6 +28,13 @@
 </dependency>
 
 <dependency>
+    <groupId>org.json</groupId>
+    <artifactId>json</artifactId>
+    <version>20220320</version>
+</dependency>
+
+
+<dependency>
     <groupId>software.amazon.awssdk</groupId>
     <artifactId>sqs</artifactId>
     <version>2.28.18</version>
