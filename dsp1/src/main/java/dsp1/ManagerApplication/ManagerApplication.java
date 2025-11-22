@@ -42,6 +42,20 @@ public class ManagerApplication {
         return msgs.get(0);
     }
 
+
+
+    public static void sendmessagetolocal (String msgbody){
+        AWSinstance.getSqs().sendMessage(
+                 SendMessageRequest.builder()
+                        .queueUrl(getQueueUrl(MANAGER_TO_LOCAL))
+                        .messageBody(msgbody)
+                        .build()
+        );
+    }
+
+
+    
+
     public static void deleteMessage(String queueName, Message msg) {
         AWSinstance.getSqs().deleteMessage(
                 DeleteMessageRequest.builder()
@@ -76,6 +90,7 @@ public class ManagerApplication {
             if (type.equals("newTask")) {
 
                 String bucket = obj.getString("s3Bucket");
+                String taskid = obj.getString("taskId");
                 String key = obj.getString("s3Key");
                 String inputFile = obj.getString("inputFile");
                 String outputFile = obj.getString("outputFile");
@@ -88,6 +103,9 @@ public class ManagerApplication {
                 System.out.println("- input: " + inputFile);
                 System.out.println("- output: " + outputFile);
                 System.out.println("- workers: " + workers);
+
+                sendmessagetolocal("fuckyou ,Task ID: " + taskid);
+
 
                 // TODO:
                 // 1. download input from S3

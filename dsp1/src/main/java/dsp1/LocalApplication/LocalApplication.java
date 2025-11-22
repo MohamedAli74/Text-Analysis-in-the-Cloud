@@ -10,9 +10,12 @@ import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
 import software.amazon.awssdk.services.s3.model.NoSuchBucketException;
 import software.amazon.awssdk.services.sqs.model.SendMessageRequest;
 import software.amazon.awssdk.services.sqs.model.GetQueueUrlRequest;
+import software.amazon.awssdk.services.sqs.model.Message;
+import software.amazon.awssdk.services.sqs.model.ReceiveMessageRequest;
+import software.amazon.awssdk.services.sqs.model.ReceiveMessageResponse;
 import dsp1.AWS;
 import java.util.Map;
-
+import java.util.UUID;
 import java.nio.file.Paths;
 import java.io.File;
 
@@ -42,6 +45,9 @@ public class LocalApplication{
     private static final String MANAGER_TAG_KEY = "Role";
     private static final String MANAGER_TAG_VALUE = "Manager";
     public static final String S3_BUCKET_NAME = "dsp-assignment1-2025111913";
+    private static final String MANAGER_TO_LOCAL = "ManagerToLocalQueue";
+    private static final String mytaskid=UUID.randomUUID().toString();
+
 
     private static final Ec2Client ec2 = Ec2Client.builder()
             .region(region)
@@ -71,10 +77,11 @@ public static String getQueueUrl(String queueName) {
  public static void sendJobToManager(String bucketName, String keyName) {
 
     String queueUrl = getQueueUrl(LocalManagerQueueName);
-   
+
     String messageBody =
         "{"
             + "\"type\":\"newTask\","
+            + "\"taskId\":\"" + mytaskid + "\","
             + "\"s3Bucket\":\"" + bucketName + "\","
             + "\"s3Key\":\"" + keyName + "\","
             + "\"inputFile\":\"" + inputFileName + "\","
@@ -82,7 +89,7 @@ public static String getQueueUrl(String queueName) {
             + "\"workers\":" + workersToFileRation + ","
             + "\"terminate\":" + terminate
         + "}";
-
+    
     SendMessageRequest sendMsg = SendMessageRequest.builder()
             .queueUrl(queueUrl)
             .messageBody(messageBody)
@@ -206,6 +213,23 @@ public static List<String> listManagerInstances() {
         s3.putObject(putObject, RequestBody.fromFile(inputFile));
     }
 
+//-----------------------for responses from manager------------------------------
+public static Message receiveMessage(String queueName) {
+    String queueUrl = getQueueUrl(queueName);
+    ReceiveMessageRequest request = ReceiveMessageRequest.builder()
+            .queueUrl(queueUrl)
+            .maxNumberOfMessages(1)
+            .waitTimeSeconds(2)
+            .build();
+    ReceiveMessageResponse response = AWSinstance.getSqs().receiveMessage(request);
+    List<Message> messages = response.messages();
+    if (messages != null && !messages.isEmpty()) {
+        return messages.get(0);
+    }
+    return null;
+}
+
+
 
 /////////////////////////////////////////MAIN//////////////////////////////////////////////
         public static void main(String args[]) {
@@ -240,7 +264,25 @@ public static List<String> listManagerInstances() {
         String s3KeyName = Paths.get(inputFileName).getFileName().toString();
         uploadFileToS3(S3_BUCKET_NAME, s3KeyName);
         sendJobToManager(S3_BUCKET_NAME, s3KeyName);
+
+
+    while (true) {
+        Message msg = receiveMessage(MANAGER_TO_LOCAL);
         
+        if (msg != null) {
+            String body = msg.body();
+            System.out.println("Received message from Manager: " + body);
+        if (body.contains("\"taskId\":\"" + mytaskid + "\"")) {
+            System.out.println(" Task " + mytaskid + " completed.");
+        }
+            // TODO :  process the message (e.g., download output file from S3)******************
+
+        } else {
+
+        try { Thread.sleep(2000); } catch (Exception e) {}
+    }
+
+    }
         
     }
 
