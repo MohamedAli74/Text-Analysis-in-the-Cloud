@@ -301,7 +301,7 @@ public static Message receiveMessage(String queueName) {
         );
 
     } else {
-        try { Thread.sleep(2000); } catch (Exception e) {}
+        try { Thread.sleep(200); } catch (Exception e) {}
     }
 }
 
