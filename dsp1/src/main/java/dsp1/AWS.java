@@ -33,8 +33,13 @@ public class AWS {
     public SqsClient getSqs() {
         return sqs;
     }
+    
 
+    public S3Client getS3() { return this.s3; }
+    public Ec2Client getEc2() { return this.ec2; }
+    
     public static AWS getInstance() {
+    
         return instance;
     }
 
@@ -65,7 +70,7 @@ public class AWS {
     public String createEC2(String script, String tagName, int numberOfInstances) {
         RunInstancesRequest runRequest = RunInstancesRequest.builder()
                 .instanceType(InstanceType.M4_LARGE)
-                .imageId(ami)
+                .imageId("ami-0c02fb55956c7d316") 
                 .maxCount(numberOfInstances)
                 .minCount(1)
                 .keyName("vockey")
