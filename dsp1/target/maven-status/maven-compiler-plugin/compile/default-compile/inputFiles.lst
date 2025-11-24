@@ -2,4 +2,6 @@
 /mnt/c/Users/asasd/Desktop/DSP-Assignment1/dsp1/src/main/java/dsp1/AWS.java
 /mnt/c/Users/asasd/Desktop/DSP-Assignment1/dsp1/src/main/java/dsp1/LocalApplication/LocalApplication.java
 /mnt/c/Users/asasd/Desktop/DSP-Assignment1/dsp1/src/main/java/dsp1/LocalApplication/LocalTesting.java
+/mnt/c/Users/asasd/Desktop/DSP-Assignment1/dsp1/src/main/java/dsp1/workers/Worker.java
 /mnt/c/Users/asasd/Desktop/DSP-Assignment1/dsp1/src/main/java/dsp1/SQSMessage.java
+/mnt/c/Users/asasd/Desktop/DSP-Assignment1/dsp1/src/main/java/dsp1/WorkerApplication/WorkerApplication.java

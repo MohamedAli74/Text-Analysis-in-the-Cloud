@@ -155,10 +155,8 @@ public class ManagerApplication {
 
     public static void sendTaskToWorkers(JSONObject taskJson) {
 
-    String queueUrl = ManagerWorkersQueueURL;
-
     SendMessageRequest sendMsg = SendMessageRequest.builder()
-            .queueUrl(queueUrl)
+            .queueUrl(ManagerWorkersQueueURL)
             .messageBody(taskJson.toString())
             .build(); 
 
