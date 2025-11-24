@@ -8,6 +8,7 @@ import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.List;
 import java.util.ArrayList;
+import java.util.HashMap;
 
 import org.json.JSONObject;
 
@@ -20,6 +21,9 @@ import software.amazon.awssdk.services.sqs.model.*;
 
 public class ManagerApplication {
         
+    private static HashMap<String, List<String>> jobIdToTasks = new HashMap<>();
+    private static HashMap<String , Integer> jobIdToExpectedTasks = new HashMap<>();
+
     private static final String LOCAL_TO_MANAGER = "LocalToManagerQueue";
     private static String LocalManagerQueueURL;
     private static final String MANAGER_TO_LOCAL = "ManagerToLocalQueue";
@@ -74,7 +78,7 @@ public class ManagerApplication {
     public static void sendMessageToLocal(String msgBody) {
         AWSinstance.getSqs().sendMessage(
                 SendMessageRequest.builder()
-                        .queueUrl(getQueueUrl(MANAGER_TO_LOCAL))
+                        .queueUrl(ManagerLocalQueueURL)
                         .messageBody(msgBody)
                         .build()
         );
@@ -82,10 +86,10 @@ public class ManagerApplication {
 
     // Delete SQS Message
     // -------------------------------------------------------------
-    public static void deleteMessage(String queueName, Message msg) {
+    public static void deleteMessage(String queueURL, Message msg) {
         AWSinstance.getSqs().deleteMessage(
                 DeleteMessageRequest.builder()
-                        .queueUrl(getQueueUrl(queueName))
+                        .queueUrl(queueURL)
                         .receiptHandle(msg.receiptHandle())
                         .build()
         );
@@ -151,7 +155,7 @@ public class ManagerApplication {
 
     public static void sendTaskToWorkers(JSONObject taskJson) {
 
-    String queueUrl = getQueueUrl("ManagerToWorkerQueue");
+    String queueUrl = ManagerWorkersQueueURL;
 
     SendMessageRequest sendMsg = SendMessageRequest.builder()
             .queueUrl(queueUrl)
@@ -208,7 +212,7 @@ public static int getRunningWorkersCount() {
 }
 
   
-  public static void givetaskstoWorkers(List<JSONObject> tasks, int tasksPerWorker) {
+  public static void startWorkersIfNeeded(List<JSONObject> tasks, int tasksPerWorker) {
 
     int runningWorkers = getRunningWorkersCount();
     int requiredWorkers = (int) Math.ceil((double) tasks.size() / tasksPerWorker);
@@ -232,12 +236,14 @@ public static int getRunningWorkersCount() {
             createWorkerInstances(finalLaunchNumber);
         }
     }
-    for (JSONObject task : tasks) {
-        sendTaskToWorkers(task);
-    }
 
     System.out.println("Distributed " + tasks.size() + " tasks to workers.");
 }
+    private static void sendTasksToWorkers(List<JSONObject> tasks){
+        for(JSONObject task : tasks) {
+            sendTaskToWorkers(task);
+        }
+    }   
 
     // --------------------------------------------MAIN
     
@@ -245,11 +251,13 @@ public static int getRunningWorkersCount() {
 
         createQueue(LOCAL_TO_MANAGER);
         LocalManagerQueueURL = getQueueUrl(LOCAL_TO_MANAGER);
+
         createQueue(MANAGER_TO_LOCAL);
         ManagerLocalQueueURL = getQueueUrl(MANAGER_TO_LOCAL);
         
         createQueue(WORKERS_TO_MANAGER);
         WorkersManagerQueueURL = getQueueUrl(WORKERS_TO_MANAGER);
+
         createQueue(MANAGER_TO_WORKERS);
         ManagerWorkersQueueURL = getQueueUrl(MANAGER_TO_WORKERS);
 
@@ -258,44 +266,89 @@ public static int getRunningWorkersCount() {
         while (true) {
 
             // 2) Receive message from LocalApps
-            Message msg = receiveMessage(LocalManagerQueueURL);
+            Message msgFromLocal = receiveMessage(LocalManagerQueueURL);
+            if (msgFromLocal != null){
+                JSONObject obj = new JSONObject(msgFromLocal.body());
+                String type = obj.getString("type");
 
-            if (msg == null)
-                continue;
+                if (type.equals("newTask")) {
+                    handleNewTaskMessage(msgFromLocal);
+                }
 
-            JSONObject obj = new JSONObject(msg.body());
-            String type = obj.getString("type");
+                else if(type.equals("terminate")) {
+                    handleTerminateMessage(msgFromLocal);
+                }
+            }
+            deleteMessage(LocalManagerQueueURL, msgFromLocal);
 
-            if (type.equals("newTask")) {
+            //----------------------------
 
-                String bucket = obj.getString("s3Bucket");
-                String taskid = obj.getString("taskId");
-                String key = obj.getString("inputFile");
-                int workersToFileRation = obj.getInt("workers");
 
-                System.out.println("Received new task:");
-                System.out.println("- task id: " + taskid);
-                System.out.println("- bucket:  " + bucket);
-                System.out.println("- file key: " + key);
+            Message msgFromWorker = receiveMessage(WorkersManagerQueueURL);
+            if (msgFromWorker != null){
+                JSONObject obj = new JSONObject(msgFromWorker.body());
+                String type = obj.getString("type");
 
-                // 1. Download file
-                String localFile = downloadFileFromS3(key);
-
-                // 2. Parse to JSON list
-                List<JSONObject> tasks = parseInputFileAsJson(localFile, taskid);
-
-                System.out.println("Parsed " + tasks.size() + " tasks from input file.");
-
-                // TODO: send tasks to workers, create workers, handle responses...
-
+                if (type.equals("taskDone")) {
+                    handleDoneMessage(msgFromWorker);
+                }
             }
 
-            else if (type.equals("terminate")) {
-                System.out.println("Terminate signal received.");
-                break;
-            }
-
-            deleteMessage(LOCAL_TO_MANAGER, msg);
         }
     }
+    ////////////////////////////////////////////handle worker messages////////////////////////////////////////////
+    private static void handleNewTaskMessage(Message msg) {
+        JSONObject obj = new JSONObject(msg.body());
+        String bucket = obj.getString("s3Bucket");
+        String taskid = obj.getString("taskId");
+        String key = obj.getString("inputFile");
+        int workersToFileRatio = obj.getInt("workers");
+
+        System.out.println("Received new task:");
+        System.out.println("- task id: " + taskid);
+        System.out.println("- bucket:  " + bucket);
+        System.out.println("- file key: " + key);
+
+        // 0. add to task status map
+        jobIdToTasks.put(taskid, new ArrayList<>());
+        
+        // 1. Download file
+        String localFile = downloadFileFromS3(key);
+        
+        // 2. Parse to JSON list
+        List<JSONObject> tasks = parseInputFileAsJson(localFile, taskid);
+        jobIdToExpectedTasks.put(taskid, tasks.size());
+
+        System.out.println("Parsed " + tasks.size() + " tasks from input file.");
+
+        // 3. workers initiation
+        startWorkersIfNeeded(tasks, workersToFileRatio);
+
+        // 4. Distribute tasks to workers
+        sendTasksToWorkers(tasks);
+    }
+
+    private static void handleTerminateMessage(Message msg) {
+        System.out.println("Terminate signal received.");
+        System.exit(0);
+    }
+
+    private static void handleDoneMessage(Message msg) {
+        JSONObject obj = new JSONObject(msg.body());
+        String taskId = obj.getString("taskId");
+        String resultLocation = obj.getString("resultS3Location");
+        jobIdToTasks.get(taskId).add(resultLocation);
+        if(jobIdToTasks.get(taskId).size() == jobIdToExpectedTasks.get(taskId)) {
+            // All tasks for this job are done
+            List<String> results = jobIdToTasks.get(taskId);
+            JSONObject resultMsg = new JSONObject();
+            resultMsg.put("type", "jobDone");
+            resultMsg.put("taskId", taskId);
+            resultMsg.put("results", results);//TODO: change this to map-reduce format
+
+            sendMessageToLocal(resultMsg.toString());
+
+        }
+        System.out.println("Task " + taskId + " completed. Result at: " + resultLocation);
+    }    
 }

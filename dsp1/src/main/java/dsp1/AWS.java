@@ -69,7 +69,7 @@ public class AWS {
     // EC2
     public String createEC2(String script, String tagName, int numberOfInstances) {
         RunInstancesRequest runRequest = RunInstancesRequest.builder()
-                .instanceType(InstanceType.M4_LARGE)
+                .instanceType(InstanceType.T2_MICRO)
                 .imageId("ami-0c02fb55956c7d316") 
                 .maxCount(numberOfInstances)
                 .minCount(1)

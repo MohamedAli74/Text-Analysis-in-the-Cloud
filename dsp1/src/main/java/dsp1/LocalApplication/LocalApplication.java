@@ -66,7 +66,7 @@ public class LocalApplication{
     private static final String LocalManagerQueueName = "LocalToManagerQueue"; // Must match Local App's definition
     private static String LocalManagerQueueURL;
     
-/////////////////////////////////////////////SQS///////////////////////////////////////
+ /////////////////////////////////////////////SQS///////////////////////////////////////
 
 
 public static String getQueueUrl(String queueName) {
@@ -79,7 +79,7 @@ public static String getQueueUrl(String queueName) {
 
  public static void sendJobToManager(String bucketName, String keyName,int workersToFileRation) {
 
-    String queueUrl = getQueueUrl(LocalManagerQueueName);
+    String queueUrl = LocalManagerQueueURL;
 
     String messageBody =
         "{"
@@ -298,7 +298,7 @@ public static Message receiveMessage(String queueUrl) {
    
     while (true) {
 
-    Message msg = receiveMessage(MANAGER_TO_LOCAL);
+    Message msg = receiveMessage(ManagerLocalQueueName);
 
     if (msg != null) {
 
@@ -321,7 +321,7 @@ public static Message receiveMessage(String queueUrl) {
         // IMPORTANT: DELETE the message so it doesn't appear again
         AWSinstance.getSqs().deleteMessage(
                 DeleteMessageRequest.builder()
-                        .queueUrl(getQueueUrl(MANAGER_TO_LOCAL))
+                        .queueUrl(ManagerLocalQueueURL)
                         .receiptHandle(msg.receiptHandle())
                         .build()
         );
@@ -334,5 +334,4 @@ public static Message receiveMessage(String queueUrl) {
 
     }
         
-    }
 }
