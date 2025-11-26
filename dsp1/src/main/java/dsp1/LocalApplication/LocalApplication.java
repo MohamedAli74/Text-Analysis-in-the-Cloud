@@ -158,7 +158,7 @@ public static List<String> listManagerInstances() {
                 instance.state().name(),
                 instance.monitoring().state());//for debugging purposes
                 if(instance.state().name() == InstanceStateName.RUNNING){
-                instanceIds.add(instance.instanceId());}
+                    instanceIds.add(instance.instanceId());}
             }
         }
         return instanceIds;
@@ -258,8 +258,36 @@ public static Message receiveMessage(String queueUrl) {
         return messages.get(0);
     }
     return null;
+
 }
 
+
+//---------delete message from queue-----------------------+
+public static void deleteMessage(String queueURL, Message msg) {
+    AWSinstance.getSqs().deleteMessage(
+        DeleteMessageRequest.builder()
+            .queueUrl(queueURL)
+            .receiptHandle(msg.receiptHandle())
+            .build()
+    );
+}
+
+public static File getFileFromS3(String bucketName, String keyName, String downloadPath) {
+    File outputFile = new File(downloadPath);
+    try {
+        s3.getObject(
+            software.amazon.awssdk.services.s3.model.GetObjectRequest.builder()
+                .bucket(bucketName)
+                .key(keyName)
+                .build(),
+            outputFile.toPath()
+        );
+    } catch (Exception e) {
+        e.printStackTrace();
+        throw new RuntimeException("Failed to download file from S3", e);
+    }
+    return outputFile;
+}
 
 
 /////////////////////////////////////////MAIN//////////////////////////////////////////////
@@ -278,30 +306,22 @@ public static Message receiveMessage(String queueUrl) {
         if(args.length == 4){
             terminate = args[3].equals("terminate");
         }
-
         //assure that the S3 buckcet exists
         CheckPucketExistence();
-
         //assure that a manager node exists
-        
         String managerId = getOrCreateManagerInstance();
-
-
         ManagerLocalQueueURL = getQueueUrl(ManagerLocalQueueName);
         LocalManagerQueueURL = getQueueUrl(LocalManagerQueueName);
-        
         //upload the input file to S3
         String inputfilepath = Paths.get(inputFileName).getFileName().toString();
         uploadFileToS3(S3_BUCKET_NAME, inputfilepath);
         sendJobToManager(S3_BUCKET_NAME, inputfilepath,workersToFileRation);
         
-   
     while (true) {
 
     Message msg = receiveMessage(ManagerLocalQueueName);
-
+    
     if (msg != null) {
-
         String body = msg.body();
         System.out.println("Received message from Manager: " + body);
 
@@ -310,28 +330,30 @@ public static Message receiveMessage(String queueUrl) {
         String taskId = obj.getString("taskId");
         String outputS3Key = obj.getString("outputS3Key");
         String bucketName = obj.getString("s3Bucket");
-        String outputFileLocal = "output_" + mytaskid + ".txt";
-        
+        String outputFileLocal = "output_" + mytaskid + ".txt";  
         sendJobToManager(bucketName, outputFileLocal,workersToFileRation);
 
         if (taskId.equals(mytaskid)) {
             System.out.println("Task " + mytaskid + " completed.");
-        }
+         deleteMessage(ManagerLocalQueueURL, msg);
 
-        // IMPORTANT: DELETE the message so it doesn't appear again
-        AWSinstance.getSqs().deleteMessage(
-                DeleteMessageRequest.builder()
-                        .queueUrl(ManagerLocalQueueURL)
-                        .receiptHandle(msg.receiptHandle())
-                        .build()
-        );
-
+        }   
+     //put ther outputfile in dsp1 
+     
+        File output = getFileFromS3(bucketName , outputFileLocal,outputFileLocal);
+       
     } else {
         try { Thread.sleep(200); } catch (Exception e) {}
     }
 }
 
-
     }
+
+       
+
+
+
+
+       
         
 }

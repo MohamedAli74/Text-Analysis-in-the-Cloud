@@ -243,57 +243,7 @@ public static int getRunningWorkersCount() {
         }
     }   
 
-    // --------------------------------------------MAIN
     
-    public static void main(String[] args) {
-
-        createQueue(LOCAL_TO_MANAGER);
-        LocalManagerQueueURL = getQueueUrl(LOCAL_TO_MANAGER);
-
-        createQueue(MANAGER_TO_LOCAL);
-        ManagerLocalQueueURL = getQueueUrl(MANAGER_TO_LOCAL);
-        
-        createQueue(WORKERS_TO_MANAGER);
-        WorkersManagerQueueURL = getQueueUrl(WORKERS_TO_MANAGER);
-
-        createQueue(MANAGER_TO_WORKERS);
-        ManagerWorkersQueueURL = getQueueUrl(MANAGER_TO_WORKERS);
-
-        System.out.println("Manager started. Waiting for messages...");
-
-        while (true) {
-
-            // 2) Receive message from LocalApps
-            Message msgFromLocal = receiveMessage(LocalManagerQueueURL);
-            if (msgFromLocal != null){
-                JSONObject obj = new JSONObject(msgFromLocal.body());
-                String type = obj.getString("type");
-
-                if (type.equals("newTask")) {
-                    handleNewTaskMessage(msgFromLocal);
-                }
-
-                else if(type.equals("terminate")) {
-                    handleTerminateMessage(msgFromLocal);
-                }
-            }
-            deleteMessage(LocalManagerQueueURL, msgFromLocal);
-
-            //----------------------------
-
-
-            Message msgFromWorker = receiveMessage(WorkersManagerQueueURL);
-            if (msgFromWorker != null){
-                JSONObject obj = new JSONObject(msgFromWorker.body());
-                String type = obj.getString("type");
-
-                if (type.equals("taskDone")) {
-                    handleDoneMessage(msgFromWorker);
-                }
-            }
-
-        }
-    }
     ////////////////////////////////////////////handle worker messages////////////////////////////////////////////
     private static void handleNewTaskMessage(Message msg) {
         JSONObject obj = new JSONObject(msg.body());
@@ -334,19 +284,85 @@ public static int getRunningWorkersCount() {
     private static void handleDoneMessage(Message msg) {
         JSONObject obj = new JSONObject(msg.body());
         String taskId = obj.getString("taskId");
-        String resultLocation = obj.getString("resultS3Location");
+        String resultLocation = obj.getString("result");
         jobIdToTasks.get(taskId).add(resultLocation);
+
         if(jobIdToTasks.get(taskId).size() == jobIdToExpectedTasks.get(taskId)) {
             // All tasks for this job are done
             List<String> results = jobIdToTasks.get(taskId);
             JSONObject resultMsg = new JSONObject();
             resultMsg.put("type", "jobDone");
             resultMsg.put("taskId", taskId);
-            resultMsg.put("results", results);//TODO: change this to map-reduce format
+            resultMsg.put("results", results);
+            //TODO: change this to map-reduce format
+            
 
             sendMessageToLocal(resultMsg.toString());
 
         }
         System.out.println("Task " + taskId + " completed. Result at: " + resultLocation);
     }    
+
+
+
+    public static void main(String[] args) {
+
+        createQueue(LOCAL_TO_MANAGER);
+        LocalManagerQueueURL = getQueueUrl(LOCAL_TO_MANAGER);
+
+        createQueue(MANAGER_TO_LOCAL);
+        ManagerLocalQueueURL = getQueueUrl(MANAGER_TO_LOCAL);
+        
+        createQueue(WORKERS_TO_MANAGER);
+        WorkersManagerQueueURL = getQueueUrl(WORKERS_TO_MANAGER);
+
+        createQueue(MANAGER_TO_WORKERS);
+        ManagerWorkersQueueURL = getQueueUrl(MANAGER_TO_WORKERS);
+
+        System.out.println("Manager started. Waiting for messages...");
+
+        while (true) {
+
+            // 2) Receive message from LocalApps
+            Message msgFromLocal = receiveMessage(LocalManagerQueueURL);
+            if (msgFromLocal != null){
+                JSONObject obj = new JSONObject(msgFromLocal.body());
+                String type = obj.getString("type");
+
+                if (type.equals("newTask")) {
+                    handleNewTaskMessage(msgFromLocal);
+                }
+                else if (type.equals("terminate")) {
+                    handleTerminateMessage(msgFromLocal);
+                }           
+            }
+            deleteMessage(LocalManagerQueueURL, msgFromLocal);
+
+      //----------------------------
+
+             Message msgFromWorker = receiveMessage(WorkersManagerQueueURL);
+            if (msgFromWorker != null){
+                JSONObject obj = new JSONObject(msgFromWorker.body());
+                String type = obj.getString("type");
+
+                if (type.equals("taskDone")) {
+                    handleDoneMessage(msgFromWorker);
+                }
+            }
+
+        }
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
 }
