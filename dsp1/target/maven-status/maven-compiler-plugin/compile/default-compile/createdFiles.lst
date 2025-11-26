@@ -1,7 +1,0 @@
-dsp1/AWS.class
-dsp1/ManagerApplication/ManagerApplication.class
-dsp1/LocalApplication/LocalTesting.class
-dsp1/LocalApplication/LocalApplication.class
-dsp1/SQSMessage.class
-dsp1/workers/Worker.class
-dsp1/WorkerApplication/WorkerApplication.class
