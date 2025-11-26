@@ -1,0 +1,16 @@
+cat << 'EOF' > .gitignore
+# ===== Maven build =====
+target/
+dependency-reduced-pom.xml
+
+# ===== IDE files =====
+.idea/
+*.iml
+.vscode/
+
+# ===== Big local models (Stanford) =====
+dsp1/models/
+
+# ===== Jar files =====
+*.jar
+EOF

@@ -9,11 +9,7 @@ import software.amazon.awssdk.services.sqs.model.DeleteMessageRequest;
 import software.amazon.awssdk.services.sqs.model.GetQueueUrlRequest;
 import software.amazon.awssdk.services.sqs.model.ReceiveMessageRequest;
 import software.amazon.awssdk.services.sqs.model.Message;
-
-import edu.stanford.nlp.tagger.maxent.MaxentTagger;
-import java.io.StringReader;
 import java.util.List;
-import java.util.Properties;
 import java.io.InputStream;
 import java.net.URL;
 import java.nio.file.Files;
