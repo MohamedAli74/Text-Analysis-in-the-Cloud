@@ -49,7 +49,7 @@ public class WorkerApplication {
            
             File resultFile = analyseFile(taskFile, analysis, currentTaskId);    
            
-            uploadFileToS3(resultFile, bucketname, "results/" + currentTaskId + "_output.txt");
+            uploadFileToS3(resultFile, bucketname, "results/" + currentTaskId + "_output.txt");//NOTE
 
             deleteMessage(WorkerManagerQueueURL, msg);
             sendMessageToManager(new JSONObject()

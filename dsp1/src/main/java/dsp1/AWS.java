@@ -43,7 +43,7 @@ public class AWS {
         return instance;
     }
 
-    public String bucketName = "only-together2";
+    public String bucketName = "dsp-assignment1-2025111913";
 
     // S3
     public void createBucketIfNotExists(String bucketName) {

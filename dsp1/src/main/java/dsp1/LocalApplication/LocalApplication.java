@@ -79,14 +79,12 @@ public static String getQueueUrl(String queueName) {
 
  public static void sendJobToManager(String bucketName, String keyName,int workersToFileRation) {
 
-    String queueUrl = LocalManagerQueueURL;
-
     String messageBody =
         "{"
             + "\"type\":\"newTask\","
             + "\"taskId\":\"" + mytaskid + "\","
             + "\"s3Bucket\":\"" + bucketName + "\","
-            + "\"inputFile\":\"" + inputFileName + "_" + mytaskid + "\","
+            + "\"s3Key\":\"" + keyName + "\","
             + "\"outputFile\":\"" + outputFileName + "\","
             + "\"workers\":" + workersToFileRation + ","
             + "\"terminate\":" + terminate
@@ -112,20 +110,19 @@ public static String getOrCreateManagerInstance() {
         System.out.println(" Manager instance already running: " + existing);
         return existing;
     }
-    
     System.out.println(" No manager found. Launching new one...");
     
     uploadManagerJar(S3_BUCKET_NAME);
     String userDataScript = """
-                         #!/bin/bash\n
-                         sudo yum update -y\n
-                         sudo yum install -y java-17-amazon-corretto\n
-                         mkdir -p /home/ec2-user/app\n
-                         aws s3 cp s3://" + s3BucketName + "/manager.jar /home/ec2-user/app/manager.jar\n
-                         nohup java -jar /home/ec2-user/app/manager.jar > /home/ec2-user/app/log.txt 2>&1 &\n
-                         """;
+        #!/bin/bash
+        sudo yum update -y
+        sudo yum install -y java-17-amazon-corretto
+        mkdir -p /home/ec2-user/app
+        aws s3 cp s3://%s/system.jar /home/ec2-user/app/system.jar
+        nohup java -jar /home/ec2-user/app/system.jar > /home/ec2-user/app/log.txt 2>&1 &
+        """.formatted(S3_BUCKET_NAME);
 
-String script = Base64.getEncoder().encodeToString(userDataScript.getBytes());
+    String script = Base64.getEncoder().encodeToString(userDataScript.getBytes());
     String newId = AWSinstance.createEC2(script, "Manager", 1);
     
     System.out.println(" Launched Manager with ID: " + newId);
@@ -180,7 +177,7 @@ public static List<String> listManagerInstances() {
             System.exit(1); // Stop execution because Manager cannot run without code
         }
 
-        String s3Key = "manager.jar";
+        String s3Key = "system.jar";
 
         // 4. Upload
         try {
@@ -191,7 +188,7 @@ public static List<String> listManagerInstances() {
 
             s3.putObject(putOb, RequestBody.fromFile(jarFile));
             
-            System.out.println("✅ Manager JAR uploaded successfully to: s3://" + bucketName + "/" + s3Key);
+            System.out.println("Manager JAR uploaded successfully to: s3://" + bucketName + "/" + s3Key);
             
         } catch (Exception e) {
             System.err.println("Failed to upload JAR: " + e.getMessage());
@@ -313,9 +310,9 @@ public static File getFileFromS3(String bucketName, String keyName, String downl
         ManagerLocalQueueURL = getQueueUrl(ManagerLocalQueueName);
         LocalManagerQueueURL = getQueueUrl(LocalManagerQueueName);
         //upload the input file to S3
-        String inputfilepath = Paths.get(inputFileName).getFileName().toString();
-        uploadFileToS3(S3_BUCKET_NAME, inputfilepath);
-        sendJobToManager(S3_BUCKET_NAME, inputfilepath,workersToFileRation);
+        String uniqueS3Key = inputFileName;
+        uploadFileToS3(S3_BUCKET_NAME, uniqueS3Key);
+        sendJobToManager(S3_BUCKET_NAME, uniqueS3Key, workersToFileRation);
         
     while (true) {
 
@@ -331,7 +328,7 @@ public static File getFileFromS3(String bucketName, String keyName, String downl
         String outputS3Key = obj.getString("outputS3Key");
         String bucketName = obj.getString("s3Bucket");
         String outputFileLocal = "output_" + mytaskid + ".txt";  
-        sendJobToManager(bucketName, outputFileLocal,workersToFileRation);
+        sendJobToManager(bucketName, outputFileLocal,workersToFileRation);//TODO: what is this call??? <------
 
         if (taskId.equals(mytaskid)) {
             System.out.println("Task " + mytaskid + " completed.");
@@ -348,12 +345,4 @@ public static File getFileFromS3(String bucketName, String keyName, String downl
 }
 
     }
-
-       
-
-
-
-
-       
-        
 }

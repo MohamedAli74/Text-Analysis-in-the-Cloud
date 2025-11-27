@@ -12,11 +12,13 @@ import java.util.HashMap;
 
 import org.json.JSONObject;
 
+import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.ec2.model.DescribeInstancesRequest;
 import software.amazon.awssdk.services.ec2.model.DescribeInstancesResponse;
 import software.amazon.awssdk.services.ec2.model.Instance;
 import software.amazon.awssdk.services.ec2.model.Reservation;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
+import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.sqs.model.*;
 
 public class ManagerApplication {
@@ -112,6 +114,14 @@ public class ManagerApplication {
         return localName;
     }
 
+    public static void uploadFileToS3(String bucketName, String keyName, String htmlFile) {
+        PutObjectRequest putObject = PutObjectRequest.builder()
+                .bucket(bucketName)
+                .key(keyName)
+                .build();
+        AWSinstance.getS3().putObject(putObject, RequestBody.fromString(htmlFile));
+    }
+
     // --------------------------------------------Parse Input File → return List<JSON>
     public static List<JSONObject> parseInputFileAsJson(String fileName, String taskId) {
 
@@ -195,7 +205,18 @@ public static int getRunningWorkersCount() {
 
 //--------------------------------------------create worker instances
   public static void createWorkerInstances(int numberOfWorkers) {
-    String workerScript = "";//chnnge
+    String workerScript = "#!/bin/bash\n"
+        // 1. Install Java (Same as Manager)
+        + "yum update -y\n"
+        + "yum install java-17-amazon-corretto -y\n"
+        // 2. Setup Directory
+        + "mkdir -p /home/ec2-user/app\n"
+        // 3. Download the JAR
+        + "aws s3 cp s3://" + AWSinstance.bucketName + "/system.jar /home/ec2-user/app/system.jar\n"
+        // 4. RUN THE WORKER CLASS (The Critical Change)
+        // We cannot use 'java -jar' because that runs the Manager (the default).
+        // We use '-cp' (Classpath) and specify the Worker class explicitly.
+        + "nohup java -cp /home/ec2-user/app/system.jar dsp1.Worker.WorkerApp > /home/ec2-user/app/worker.log 2>&1 &";
     AWSinstance.createEC2(workerScript, "Worker", numberOfWorkers);
     System.out.println("Created " + numberOfWorkers + " worker instances.");
   }
@@ -304,6 +325,30 @@ public static int getRunningWorkersCount() {
     }    
 
 
+    public void makeSummaryFile(String taskId, List<String> resultKeys) {
+        StringBuilder html = new StringBuilder("<html><body><h1>Summary for " + taskId + "</h1>");
+        
+        // Loop through the list from your Map
+        for (String key : resultKeys) {
+
+            GetObjectRequest getObjectRequest = GetObjectRequest.builder()
+                    .bucket(AWSinstance.bucketName)
+                    .key(key)
+                    .build();
+
+            // Download small file content from S3
+            String content = AWSinstance.getS3().getObjectAsBytes(getObjectRequest).asUtf8String();
+            html.append(content).append("<br/>");
+        }
+        
+        html.append("</body></html>");
+        
+        // Upload the summary HTML file to S3
+        uploadFileToS3(AWSinstance.bucketName, "results/" + taskId + "_summary.html", html.toString());
+        
+    }
+
+// ----------------------------Main---------------------------------    
 
     public static void main(String[] args) {
 
@@ -340,7 +385,7 @@ public static int getRunningWorkersCount() {
 
       //----------------------------
 
-             Message msgFromWorker = receiveMessage(WorkersManagerQueueURL);
+            Message msgFromWorker = receiveMessage(WorkersManagerQueueURL);
             if (msgFromWorker != null){
                 JSONObject obj = new JSONObject(msgFromWorker.body());
                 String type = obj.getString("type");
@@ -352,17 +397,5 @@ public static int getRunningWorkersCount() {
 
         }
     }
-
-
-
-
-
-
-
-
-
-
-
-
 
 }
