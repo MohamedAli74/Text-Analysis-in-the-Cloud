@@ -48,9 +48,8 @@ public class LocalApplication{
     private static final Region region = Region.US_EAST_1;
     private static final String MANAGER_TAG_KEY = "Role";
     private static final String MANAGER_TAG_VALUE = "Manager";
-    public static final String S3_BUCKET_NAME = "dsp-assignment1-2025111913";
-    private static final String mytaskid=UUID.randomUUID().toString();
-
+    public static final String S3_BUCKET_NAME = "dsp-assignment1-12025111913";
+    private static String mytaskid="";
 
     private static final Ec2Client ec2 = Ec2Client.builder()
             .region(region)
@@ -62,14 +61,12 @@ public class LocalApplication{
 
     private static final String ManagerLocalQueueName = "ManagerToLocalQueue"; // Must match Local App's definition
     private static String ManagerLocalQueueURL;
-    
     private static final String LocalManagerQueueName = "LocalToManagerQueue"; // Must match Local App's definition
     private static String LocalManagerQueueURL;
     
  /////////////////////////////////////////////SQS///////////////////////////////////////
-
-
-public static String getQueueUrl(String queueName) {
+ 
+   public static String getQueueUrl(String queueName) {
     return AWSinstance.getSqs().getQueueUrl(
         GetQueueUrlRequest.builder()
         .queueName(queueName)
@@ -84,11 +81,13 @@ public static String getQueueUrl(String queueName) {
             + "\"type\":\"newTask\","
             + "\"taskId\":\"" + mytaskid + "\","
             + "\"s3Bucket\":\"" + bucketName + "\","
-            + "\"s3Key\":\"" + keyName + "\","
+            + "\"key\":\"" + keyName + "\","
             + "\"outputFile\":\"" + outputFileName + "\","
             + "\"workers\":" + workersToFileRation + ","
             + "\"terminate\":" + terminate
         + "}";
+
+        System.out.println("Sending job to Manager: " + messageBody);
         
     SendMessageRequest sendMsg = SendMessageRequest.builder()
             .queueUrl(LocalManagerQueueURL)
@@ -304,13 +303,15 @@ public static File getFileFromS3(String bucketName, String keyName, String downl
             terminate = args[3].equals("terminate");
         }
         //assure that the S3 buckcet exists
-        CheckPucketExistence();
+        //CheckPucketExistence();
         //assure that a manager node exists
         String managerId = getOrCreateManagerInstance();
         ManagerLocalQueueURL = getQueueUrl(ManagerLocalQueueName);
         LocalManagerQueueURL = getQueueUrl(LocalManagerQueueName);
         //upload the input file to S3
-        String uniqueS3Key = inputFileName;
+        mytaskid=mytaskid + UUID.randomUUID().toString();
+        String uniqueS3Key = inputFileName+mytaskid;
+        System.out.println("Uploading input file to S3 with key: " + uniqueS3Key);
         uploadFileToS3(S3_BUCKET_NAME, uniqueS3Key);
         sendJobToManager(S3_BUCKET_NAME, uniqueS3Key, workersToFileRation);
         
@@ -321,23 +322,23 @@ public static File getFileFromS3(String bucketName, String keyName, String downl
     if (msg != null) {
         String body = msg.body();
         System.out.println("Received message from Manager: " + body);
-
-        JSONObject obj = new JSONObject(body);
+        JSONObject obj = new JSONObject(body);    
         String type = obj.getString("type");
         String taskId = obj.getString("taskId");
         String outputS3Key = obj.getString("outputS3Key");
         String bucketName = obj.getString("s3Bucket");
-        String outputFileLocal = "output_" + mytaskid + ".txt";  
-        sendJobToManager(bucketName, outputFileLocal,workersToFileRation);//TODO: what is this call??? <------
-
-        if (taskId.equals(mytaskid)) {
-            System.out.println("Task " + mytaskid + " completed.");
-         deleteMessage(ManagerLocalQueueURL, msg);
-
-        }   
-     //put ther outputfile in dsp1 
-     
-        File output = getFileFromS3(bucketName , outputFileLocal,outputFileLocal);
+        String outputFileLocal = "output_" + mytaskid + ".html";  
+             
+       if (taskId.equals(mytaskid)) {
+             System.out.println("Task " + mytaskid + " completed.");
+                              
+            getFileFromS3(bucketName, outputS3Key, outputFileName);
+            System.out.println(" Result saved locally to: " + new File(outputFileLocal).getAbsolutePath());
+            deleteMessage(ManagerLocalQueueURL, msg);
+                            
+            System.exit(0);
+                        
+        }
        
     } else {
         try { Thread.sleep(200); } catch (Exception e) {}

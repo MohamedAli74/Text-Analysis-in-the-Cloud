@@ -20,9 +20,9 @@ import java.nio.file.StandardCopyOption;
 public class WorkerApplication {
     private static final AWS AWSinstance = AWS.getInstance();
 
-    private static final String WorkerManagerQueueName = "WorkerToManagerQueue";
+    private static final String WorkerManagerQueueName = "WorkersToManagerQueue";
     private static String WorkerManagerQueueURL;
-    private static final String ManagerWorkerQueueName = "ManagerToWorkerQueue";
+    private static final String ManagerWorkerQueueName = "ManagerToWorkersQueue";
     private static String ManagerWorkerQueueURL;
     private static String currentTaskId;
 
@@ -36,29 +36,30 @@ public class WorkerApplication {
                 .build()).queueUrl();
 
         while(true){ 
-            Message msg = receiveMessage(WorkerManagerQueueURL);
-            if (msg == null) {
-                continue;
-            }
-            JSONObject messageJson = new JSONObject(msg.body());
+           System.out.println("Worker is waiting for tasks...");
+            Message msg = receiveMessage(ManagerWorkerQueueURL);
+            if (msg != null) {
+                System.out.println("Worker received a task message.");
+                System.out.println("Message body: " + msg.body());
+             JSONObject messageJson = new JSONObject(msg.body());
+            System.out.println("Worker received message: " + messageJson.toString());
             currentTaskId = messageJson.getString("taskId");
             String url = messageJson.getString("url");
             String analysis = messageJson.getString("analysis");
-            String bucketname = messageJson.getString("bucketname");
             File taskFile = downloadFileFromURL(url, currentTaskId, "./");
-           
-            File resultFile = analyseFile(taskFile, analysis, currentTaskId);    
-           
-            uploadFileToS3(resultFile, bucketname, "results/" + currentTaskId + "_output.txt");//NOTE
-
-            deleteMessage(WorkerManagerQueueURL, msg);
+            File resultFile = analyseFile(taskFile, analysis, currentTaskId); 
+            System.out.println("Analysis complete for task" );   
+           String buckename = "dsp-assignment1-12025111913";//NOTE
+           System.out.println("starting upload to s3...");
+            uploadFileToS3(resultFile, "results/" + currentTaskId + "_output.txt");//NOTE
+            deleteMessage(ManagerWorkerQueueURL, msg);
             sendMessageToManager(new JSONObject()
                         .put("taskId", currentTaskId)
                         .put("type", "jobDone")
                         .put("result", "results/" + currentTaskId + "_output.txt")
                         .toString()
                 );
-        }
+        }}
            
 
        }
@@ -88,11 +89,11 @@ public class WorkerApplication {
         return msgs.get(0);
     }
     
-    private static void uploadFileToS3(File file, String bucketName, String keyName) {
+    private static void uploadFileToS3(File file, String keyName) {
         try {
             AWSinstance.getS3().putObject(
                     software.amazon.awssdk.services.s3.model.PutObjectRequest.builder()
-                            .bucket(bucketName)
+                            .bucket("dsp-assignment1-12025111913") // NOTE: hardcoded bucket name
                             .key(keyName)
                             .build(),
                     file.toPath()
@@ -106,9 +107,8 @@ public class WorkerApplication {
 
 
     private static File analyseFile(File file, String analysisType, String taskId) {
-    StanfordNLP nlp = new StanfordNLP();
+    StanfordNLP nlp = StanfordNLP.getInstance();
     File outputFile = new File("/tmp/" + taskId + "_output.txt");
-
     try {
         List<String> lines = Files.readAllLines(file.toPath());
         StringBuilder sb = new StringBuilder();
@@ -117,14 +117,22 @@ public class WorkerApplication {
             if (line.isBlank()) continue;
 
             String result;
-            if (analysisType.equals("POS")) {
-                result = nlp.analyzePOS(line);
-            } else if (analysisType.equals("Constituency")) {
-                result = nlp.analyzeConstituency(line);
-            } else if (analysisType.equals("Dependencies")) {
-                result = nlp.analyzeDependency(line);
-            } else {
-                result = "Unknown analysis type: " + analysisType;
+
+            switch (analysisType) {
+                case "POS":
+                    result = nlp.analyzePOS(line);
+                    break;
+
+                case "Constituency":
+                    result = nlp.analyzeConstituency(line);
+                    break;
+
+                case "Dependencies":
+                    result = nlp.analyzeDependency(line);
+                    break;
+
+                default:
+                    result = "Unknown analysis type: " + analysisType;
             }
 
             sb.append("INPUT: ").append(line).append("\n");
@@ -141,13 +149,21 @@ public class WorkerApplication {
 }
 
 
+
     public static void deleteMessage(String queueURL, Message msg) {
-        AWSinstance.getSqs().deleteMessage(
+        try {
+            AWSinstance.getSqs().deleteMessage(
                 DeleteMessageRequest.builder()
                         .queueUrl(queueURL)
                         .receiptHandle(msg.receiptHandle())
                         .build()
-        );
+            );
+            System.out.println("Message deleted successfully.");
+            
+        } catch (Exception e) {
+            System.err.println("Warning: Failed to delete message. It might have timed out.");
+            System.err.println("Error details: " + e.getMessage());
+        }
     }
 
     private static File downloadFileFromURL(String url, String taskId, String destinationPath) {//NODE

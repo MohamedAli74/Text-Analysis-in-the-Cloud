@@ -1,72 +1,63 @@
 package dsp1.WorkerApplication;
 
-import dsp1.AWS;
-import edu.stanford.nlp.tagger.maxent.MaxentTagger;
-import edu.stanford.nlp.parser.lexparser.LexicalizedParser;
+import edu.stanford.nlp.pipeline.StanfordCoreNLP;
+import edu.stanford.nlp.pipeline.CoreDocument;
+import edu.stanford.nlp.pipeline.CoreSentence;
 import edu.stanford.nlp.trees.Tree;
-import edu.stanford.nlp.trees.GrammaticalStructure;
-import edu.stanford.nlp.trees.GrammaticalStructureFactory;
+import edu.stanford.nlp.semgraph.SemanticGraph;
 
-import software.amazon.awssdk.services.s3.model.GetObjectRequest;
-
-import java.io.File;
+import java.util.Properties;
 
 public class StanfordNLP {
 
-    private static final String BUCKET = "dsp-assignment1-2025111913";
+    // instance وحيدة (Singleton)
+    private static final StanfordNLP INSTANCE = new StanfordNLP();
 
-    private MaxentTagger posTagger;
-    private LexicalizedParser parser;
+    private final StanfordCoreNLP pipeline;
 
-    public StanfordNLP() {
-        try {
-            // 1) Download models from S3 to /tmp
-            String posModel = downloadModelFromS3("models/english-left3words-distsim.tagger");
-            String pcfgModel = downloadModelFromS3("models/englishPCFG.ser.gz");
-
-            // 2) Load them
-            posTagger = new MaxentTagger(posModel);
-            parser = LexicalizedParser.loadModel(pcfgModel);
-
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to load Stanford models", e);
-        }
+    private StanfordNLP() {
+        Properties props = new Properties();
+        props.setProperty("annotators", "tokenize,ssplit,pos,parse,depparse");
+        this.pipeline = new StanfordCoreNLP(props);
     }
 
-    // Download model file from S3 to local /tmp dir
-    private String downloadModelFromS3(String key) throws Exception {
-
-        File local = new File("/tmp/" + key.replace("/", "_"));
-        local.getParentFile().mkdirs();
-
-        AWS.getInstance().getS3().getObject(
-                GetObjectRequest.builder()
-                        .bucket(BUCKET)
-                        .key(key)
-                        .build(),
-                local.toPath()
-        );
-
-        return local.getAbsolutePath();
+    public static StanfordNLP getInstance() {
+        return INSTANCE;
     }
 
     public String analyzePOS(String text) {
-        return posTagger.tagString(text);
+        CoreDocument document = new CoreDocument(text);
+        pipeline.annotate(document);
+        StringBuilder result = new StringBuilder();
+
+        document.tokens().forEach(token ->
+                result.append(token.word())
+                      .append(" (")
+                      .append(token.tag())
+                      .append(") ")
+        );
+        return result.toString();
     }
 
     public String analyzeConstituency(String text) {
-        Tree tree = parser.parse(text);
-        return tree.toString();
+        CoreDocument document = new CoreDocument(text);
+        pipeline.annotate(document);
+        if (document.sentences().isEmpty()) return "";
+
+        CoreSentence sentence = document.sentences().get(0);
+        Tree constituencyParse = sentence.constituencyParse();
+        return (constituencyParse != null) ? constituencyParse.toString() : "";
     }
 
     public String analyzeDependency(String text) {
-        Tree tree = parser.parse(text);
+        CoreDocument document = new CoreDocument(text);
+        pipeline.annotate(document);
+        if (document.sentences().isEmpty()) return "";
 
-        GrammaticalStructureFactory gsf =
-                parser.treebankLanguagePack().grammaticalStructureFactory();
-
-        GrammaticalStructure gs = gsf.newGrammaticalStructure(tree);
-
-        return gs.typedDependencies().toString();
+        CoreSentence sentence = document.sentences().get(0);
+        SemanticGraph dependencyParse = sentence.dependencyParse();
+        return (dependencyParse != null)
+                ? dependencyParse.toString(SemanticGraph.OutputFormat.LIST)
+                : "";
     }
 }

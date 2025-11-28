@@ -31,9 +31,9 @@ public class ManagerApplication {
     private static final String MANAGER_TO_LOCAL = "ManagerToLocalQueue";
     private static String ManagerLocalQueueURL;
     
-    private static final String WORKERS_TO_MANAGER = "LocalToManagerQueue";
+    private static final String WORKERS_TO_MANAGER = "WorkersToManagerQueue";
     private static String WorkersManagerQueueURL;
-    private static final String MANAGER_TO_WORKERS = "ManagerToLocalQueue";
+    private static final String MANAGER_TO_WORKERS = "ManagerToWorkersQueue";
     private static String ManagerWorkersQueueURL;
 
     private static final AWS AWSinstance = AWS.getInstance();
@@ -76,7 +76,20 @@ public class ManagerApplication {
     }
 
     //-------------------------------------- Send message to Local
-    // -------------------------------------------------------------
+    
+    public static void sendmessagetoworker(String msgBody) {
+        AWSinstance.getSqs().sendMessage(
+                SendMessageRequest.builder()
+                        .queueUrl(ManagerWorkersQueueURL)
+                        .messageBody(msgBody)
+                        .build()
+        );
+    }
+   
+   
+   
+   
+    // --------------------------msg to local  -----------------------------------
     public static void sendMessageToLocal(String msgBody) {
         AWSinstance.getSqs().sendMessage(
                 SendMessageRequest.builder()
@@ -97,23 +110,29 @@ public class ManagerApplication {
         );
     }
 
-    // ---------------------------------------Download input file from S3
+  // ---------------------------------------Download input file from S3
     public static String downloadFileFromS3(String filename) {
+        String localName = "downloaded_" + filename.replace("/", "_"); 
 
-        String localName = "downloaded_" + filename;
+        try {
+            Files.deleteIfExists(Paths.get(localName)); 
+            // -----------------------------------------------------
 
-        GetObjectRequest obj = GetObjectRequest.builder()
-                .bucket("dsp-assignment1-2025111913")//ممكن نغير لقدام 
+            GetObjectRequest obj = GetObjectRequest.builder()
+                .bucket(AWSinstance.bucketName)
                 .key(filename)
                 .build();
 
-        AWSinstance.getS3().getObject(obj, Paths.get(localName));
+            AWSinstance.getS3().getObject(obj, Paths.get(localName));
+            System.out.println("Downloaded file from S3: " + filename);
+            return localName;
 
-        System.out.println("Downloaded file from S3: " + filename);
-
-        return localName;
+        } catch (Exception e) {
+            System.out.println("ERROR downloading from S3. key = " + filename);
+            e.printStackTrace();
+            throw new RuntimeException(e);
+        }
     }
-
     public static void uploadFileToS3(String bucketName, String keyName, String htmlFile) {
         PutObjectRequest putObject = PutObjectRequest.builder()
                 .bucket(bucketName)
@@ -206,25 +225,21 @@ public static int getRunningWorkersCount() {
 //--------------------------------------------create worker instances
   public static void createWorkerInstances(int numberOfWorkers) {
     String workerScript = "#!/bin/bash\n"
-        // 1. Install Java (Same as Manager)
+        // 1. Install Java
         + "yum update -y\n"
         + "yum install java-17-amazon-corretto -y\n"
-        // 2. Setup Directory
         + "mkdir -p /home/ec2-user/app\n"
-        // 3. Download the JAR
         + "aws s3 cp s3://" + AWSinstance.bucketName + "/system.jar /home/ec2-user/app/system.jar\n"
-        // 4. RUN THE WORKER CLASS (The Critical Change)
-        // We cannot use 'java -jar' because that runs the Manager (the default).
-        // We use '-cp' (Classpath) and specify the Worker class explicitly.
-        + "nohup java -cp /home/ec2-user/app/system.jar dsp1.Worker.WorkerApp > /home/ec2-user/app/worker.log 2>&1 &";
+        + "nohup java -cp /home/ec2-user/app/system.jar dsp1.WorkerApplication.WorkerApplication > /home/ec2-user/app/worker.log 2>&1 &";
+    
     AWSinstance.createEC2(workerScript, "Worker", numberOfWorkers);
     System.out.println("Created " + numberOfWorkers + " worker instances.");
-  }
+}
 
 
   //--------------------------------------- parse and distribute tasks to workers
    public static int AvailableWorker() {
-    int maxWorkers = 17;
+    int maxWorkers = 7;
     int runningWorkers = getRunningWorkersCount();
     return maxWorkers - runningWorkers;
 
@@ -270,7 +285,7 @@ public static int getRunningWorkersCount() {
         JSONObject obj = new JSONObject(msg.body());
         String bucket = obj.getString("s3Bucket");
         String taskid = obj.getString("taskId");
-        String key = obj.getString("inputFile");
+        String key = obj.getString("key");
         int workersToFileRatio = obj.getInt("workers");
 
         System.out.println("Received new task:");
@@ -280,10 +295,12 @@ public static int getRunningWorkersCount() {
 
         // 0. add to task status map
         jobIdToTasks.put(taskid, new ArrayList<>());
-        
+        System.out.println("Downloaded input file1  ");
+
         // 1. Download file
         String localFile = downloadFileFromS3(key);
-        
+        System.out.println("Downloaded input file  ");
+
         // 2. Parse to JSON list
         List<JSONObject> tasks = parseInputFileAsJson(localFile, taskid);
         jobIdToExpectedTasks.put(taskid, tasks.size());
@@ -307,46 +324,60 @@ public static int getRunningWorkersCount() {
         String taskId = obj.getString("taskId");
         String resultLocation = obj.getString("result");
         jobIdToTasks.get(taskId).add(resultLocation);
-
-        if(jobIdToTasks.get(taskId).size() == jobIdToExpectedTasks.get(taskId)) {
-            // All tasks for this job are done
+        
+        if (jobIdToTasks.get(taskId).size() == jobIdToExpectedTasks.get(taskId)) {
+            System.out.println("All tasks for job " + taskId + " are done. Creating summary...");
+            
             List<String> results = jobIdToTasks.get(taskId);
-            JSONObject resultMsg = new JSONObject();
+            String summaryKey = "results/" + taskId + "_summary.html";
+
+            makeSummaryFile(taskId, results, summaryKey);
+             System.out.println("Summary file created: " );
+           JSONObject resultMsg = new JSONObject();
             resultMsg.put("type", "jobDone");
             resultMsg.put("taskId", taskId);
-            resultMsg.put("results", results);
-            //TODO: change this to map-reduce format
+            resultMsg.put("s3Bucket", AWSinstance.bucketName);     
+            resultMsg.put("outputS3Key", summaryKey);            
             
-
             sendMessageToLocal(resultMsg.toString());
+            System.out.println("Sent jobDone to LocalApp.");
 
+            jobIdToTasks.remove(taskId);
+            jobIdToExpectedTasks.remove(taskId);
         }
-        System.out.println("Task " + taskId + " completed. Result at: " + resultLocation);
-    }    
+
+    } 
 
 
-    public void makeSummaryFile(String taskId, List<String> resultKeys) {
-        StringBuilder html = new StringBuilder("<html><body><h1>Summary for " + taskId + "</h1>");
-        
-        // Loop through the list from your Map
-        for (String key : resultKeys) {
+   public static void makeSummaryFile(String taskId, List<String> resultKeys, String summaryKey) {
+    StringBuilder html = new StringBuilder();
+    html.append("<html><head><title>Results for ").append(taskId).append("</title></head><body>");
+    html.append("<h1>Analysis Summary for Task: ").append(taskId).append("</h1>");
+    html.append("<hr>");
 
+    for (String key : resultKeys) {
+        try {
             GetObjectRequest getObjectRequest = GetObjectRequest.builder()
                     .bucket(AWSinstance.bucketName)
                     .key(key)
                     .build();
-
-            // Download small file content from S3
+            
             String content = AWSinstance.getS3().getObjectAsBytes(getObjectRequest).asUtf8String();
-            html.append(content).append("<br/>");
+            
+            html.append("<div style='border:1px solid #ccc; margin:10px; padding:10px;'>");
+            html.append(content.replace("\n", "<br>")); // 
+            html.append("</div>");
+            
+        } catch (Exception e) {
+            html.append("<p style='color:red;'>Failed to retrieve part: ").append(key).append("</p>");
         }
-        
-        html.append("</body></html>");
-        
-        // Upload the summary HTML file to S3
-        uploadFileToS3(AWSinstance.bucketName, "results/" + taskId + "_summary.html", html.toString());
-        
     }
+    
+    html.append("</body></html>");
+
+    uploadFileToS3(AWSinstance.bucketName, summaryKey, html.toString());
+    System.out.println("Summary file uploaded to: " + summaryKey);
+}
 
 // ----------------------------Main---------------------------------    
 
@@ -371,8 +402,10 @@ public static int getRunningWorkersCount() {
             // 2) Receive message from LocalApps
             Message msgFromLocal = receiveMessage(LocalManagerQueueURL);
             if (msgFromLocal != null){
+
                 JSONObject obj = new JSONObject(msgFromLocal.body());
                 String type = obj.getString("type");
+               System.out.println( msgFromLocal.body());
 
                 if (type.equals("newTask")) {
                     handleNewTaskMessage(msgFromLocal);
@@ -381,17 +414,16 @@ public static int getRunningWorkersCount() {
                     handleTerminateMessage(msgFromLocal);
                 }           
             }
-            deleteMessage(LocalManagerQueueURL, msgFromLocal);
 
       //----------------------------
-
+          System.out.println("Checking for worker messages...");
             Message msgFromWorker = receiveMessage(WorkersManagerQueueURL);
             if (msgFromWorker != null){
                 JSONObject obj = new JSONObject(msgFromWorker.body());
                 String type = obj.getString("type");
-
-                if (type.equals("taskDone")) {
+                if (type.equals("jobDone")) {
                     handleDoneMessage(msgFromWorker);
+                    deleteMessage(WORKERS_TO_MANAGER, msgFromWorker);
                 }
             }
 

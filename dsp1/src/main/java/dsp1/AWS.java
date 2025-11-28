@@ -43,7 +43,7 @@ public class AWS {
         return instance;
     }
 
-    public String bucketName = "dsp-assignment1-2025111913";
+    public String bucketName = "dsp-assignment1-12025111913";
 
     // S3
     public void createBucketIfNotExists(String bucketName) {
@@ -69,7 +69,7 @@ public class AWS {
     // EC2
     public String createEC2(String script, String tagName, int numberOfInstances) {
         RunInstancesRequest runRequest = RunInstancesRequest.builder()
-                .instanceType(InstanceType.T2_MICRO)
+                .instanceType(InstanceType.T2_MEDIUM)
                 .imageId("ami-0c02fb55956c7d316") 
                 .maxCount(numberOfInstances)
                 .minCount(1)
@@ -107,6 +107,7 @@ public class AWS {
 
     // SQS
     public void createSqsQueue(String queueName) {
+       
         CreateQueueRequest createQueueRequest = CreateQueueRequest.builder()
                 .queueName(queueName)
                 .build();
