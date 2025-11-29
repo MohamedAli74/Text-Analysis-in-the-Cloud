@@ -328,11 +328,13 @@ public static File getFileFromS3(String bucketName, String keyName, String downl
         String outputS3Key = obj.getString("outputS3Key");
         String bucketName = obj.getString("s3Bucket");
         String outputFileLocal = "output_" + mytaskid + ".html";  
-             
+        
+        System.out.println(msg.body().toString());
        if (taskId.equals(mytaskid)) {
              System.out.println("Task " + mytaskid + " completed.");
                               
             getFileFromS3(bucketName, outputS3Key, outputFileName);
+            // Download the result file from S3
             System.out.println(" Result saved locally to: " + new File(outputFileLocal).getAbsolutePath());
             deleteMessage(ManagerLocalQueueURL, msg);
                             

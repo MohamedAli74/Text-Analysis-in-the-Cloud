@@ -36,33 +36,33 @@ public class WorkerApplication {
                 .build()).queueUrl();
 
         while(true){ 
-           System.out.println("Worker is waiting for tasks...");
+            System.out.println("Worker is waiting for tasks...");
             Message msg = receiveMessage(ManagerWorkerQueueURL);
             if (msg != null) {
                 System.out.println("Worker received a task message.");
                 System.out.println("Message body: " + msg.body());
-             JSONObject messageJson = new JSONObject(msg.body());
-            System.out.println("Worker received message: " + messageJson.toString());
-            currentTaskId = messageJson.getString("taskId");
-            String url = messageJson.getString("url");
-            String analysis = messageJson.getString("analysis");
-            File taskFile = downloadFileFromURL(url, currentTaskId, "./");
-            File resultFile = analyseFile(taskFile, analysis, currentTaskId); 
-            System.out.println("Analysis complete for task" );   
-           String buckename = "dsp-assignment1-12025111913";//NOTE
-           System.out.println("starting upload to s3...");
-            uploadFileToS3(resultFile, "results/" + currentTaskId + "_output.txt");//NOTE
-            deleteMessage(ManagerWorkerQueueURL, msg);
-            sendMessageToManager(new JSONObject()
-                        .put("taskId", currentTaskId)
-                        .put("type", "jobDone")
-                        .put("result", "results/" + currentTaskId + "_output.txt")
-                        .toString()
-                );
-        }}
-           
-
-       }
+                JSONObject messageJson = new JSONObject(msg.body());
+                System.out.println("Worker received message: " + messageJson.toString());
+                currentTaskId = messageJson.getString("taskId");
+                String url = messageJson.getString("url");
+                String analysis = messageJson.getString("analysis");
+                File taskFile = downloadFileFromURL(url, currentTaskId, "./");
+                File resultFile = analyseFile(taskFile, analysis, currentTaskId); 
+                System.out.println("Analysis complete for task" );   
+                String buckename = "dsp-assignment1-12025111913";//NOTE
+                System.out.println("starting upload to s3...");
+                String keyName =  "results/" + currentTaskId + "_output.txt_" + url.replace('/','-')+ "_" + analysis;
+                uploadFileToS3(resultFile, keyName);
+                deleteMessage(ManagerWorkerQueueURL, msg);
+                sendMessageToManager(new JSONObject()
+                            .put("taskId", currentTaskId)
+                            .put("type", "jobDone")
+                            .put("result", keyName)
+                            .toString()
+                    );
+            }
+        }           
+    }
          
        public static void sendMessageToManager(String messageBody) {
         AWSinstance.getSqs().sendMessage(builder -> builder
@@ -123,11 +123,11 @@ public class WorkerApplication {
                     result = nlp.analyzePOS(line);
                     break;
 
-                case "Constituency":
+                case "CONSTITUENCY":
                     result = nlp.analyzeConstituency(line);
                     break;
 
-                case "Dependencies":
+                case "DEPENDENCY":
                     result = nlp.analyzeDependency(line);
                     break;
 
@@ -146,7 +146,7 @@ public class WorkerApplication {
         e.printStackTrace();
         throw new RuntimeException("Analysis failed", e);
     }
-}
+    }
 
 
 

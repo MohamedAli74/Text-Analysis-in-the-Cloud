@@ -10,33 +10,41 @@ import java.util.List;
 import java.util.ArrayList;
 import java.util.HashMap;
 
+import org.apache.lucene.index.Term;
 import org.json.JSONObject;
 
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.ec2.model.DescribeInstancesRequest;
 import software.amazon.awssdk.services.ec2.model.DescribeInstancesResponse;
+import software.amazon.awssdk.services.ec2.model.Ec2Exception;
 import software.amazon.awssdk.services.ec2.model.Instance;
+import software.amazon.awssdk.services.ec2.model.InstanceStateName;
 import software.amazon.awssdk.services.ec2.model.Reservation;
+import software.amazon.awssdk.services.ec2.model.TerminateInstancesRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.sqs.model.*;
 
 public class ManagerApplication {
-        
-    private static HashMap<String, List<String>> jobIdToTasks = new HashMap<>();
+
+    private static HashMap<String, List<String>> jobIdToResults = new HashMap<>();
     private static HashMap<String , Integer> jobIdToExpectedTasks = new HashMap<>();
 
     private static final String LOCAL_TO_MANAGER = "LocalToManagerQueue";
     private static String LocalManagerQueueURL;
     private static final String MANAGER_TO_LOCAL = "ManagerToLocalQueue";
     private static String ManagerLocalQueueURL;
-    
+
     private static final String WORKERS_TO_MANAGER = "WorkersToManagerQueue";
     private static String WorkersManagerQueueURL;
     private static final String MANAGER_TO_WORKERS = "ManagerToWorkersQueue";
     private static String ManagerWorkersQueueURL;
 
     private static final AWS AWSinstance = AWS.getInstance();
+    private static boolean toTerminate = false;
+
+    private static int jobsReceived = 0;
+    private static int jobsCompleted = 0;
 
 
     // -------------------------------------------------------------
@@ -44,28 +52,28 @@ public class ManagerApplication {
     // -------------------------------------------------------------
     public static void createQueue(String queueName) {
         AWSinstance.getSqs().createQueue(
-                CreateQueueRequest.builder()
-                        .queueName(queueName)
-                        .build()
-        );
+        CreateQueueRequest.builder()
+            .queueName(queueName)
+            .build()
+            );
         System.out.println("Queue created: " + queueName);
     }
 
     public static String getQueueUrl(String queueName) {
         return AWSinstance.getSqs().getQueueUrl(
-                GetQueueUrlRequest.builder()
-                        .queueName(queueName)
-                        .build()
-        ).queueUrl();
+        GetQueueUrlRequest.builder()
+            .queueName(queueName)
+            .build()
+            ).queueUrl();
     }
 
     public static Message receiveMessage(String queueURL) {
         ReceiveMessageRequest req =
-                ReceiveMessageRequest.builder()
-                        .queueUrl(queueURL)
-                        .maxNumberOfMessages(1)
-                        .waitTimeSeconds(10)
-                        .build();
+        ReceiveMessageRequest.builder()
+            .queueUrl(queueURL)
+            .maxNumberOfMessages(1)
+            .waitTimeSeconds(10)
+            .build();
 
         var msgs = AWSinstance.getSqs().receiveMessage(req).messages();
 
@@ -76,41 +84,41 @@ public class ManagerApplication {
     }
 
     //-------------------------------------- Send message to Local
-    
+
     public static void sendmessagetoworker(String msgBody) {
         AWSinstance.getSqs().sendMessage(
-                SendMessageRequest.builder()
-                        .queueUrl(ManagerWorkersQueueURL)
-                        .messageBody(msgBody)
-                        .build()
-        );
+            SendMessageRequest.builder()
+                .queueUrl(ManagerWorkersQueueURL)
+                .messageBody(msgBody)
+                .build()
+                );
     }
-   
-   
-   
-   
+
+
+
+
     // --------------------------msg to local  -----------------------------------
     public static void sendMessageToLocal(String msgBody) {
         AWSinstance.getSqs().sendMessage(
-                SendMessageRequest.builder()
-                        .queueUrl(ManagerLocalQueueURL)
-                        .messageBody(msgBody)
-                        .build()
-        );
+            SendMessageRequest.builder()
+                .queueUrl(ManagerLocalQueueURL)
+                .messageBody(msgBody)
+                .build()
+                );
     }
 
     // Delete SQS Message
     // -------------------------------------------------------------
     public static void deleteMessage(String queueURL, Message msg) {
         AWSinstance.getSqs().deleteMessage(
-                DeleteMessageRequest.builder()
-                        .queueUrl(queueURL)
-                        .receiptHandle(msg.receiptHandle())
-                        .build()
-        );
+            DeleteMessageRequest.builder()
+                .queueUrl(queueURL)
+                .receiptHandle(msg.receiptHandle())
+                .build()
+                );
     }
 
-  // ---------------------------------------Download input file from S3
+    // ---------------------------------------Download input file from S3
     public static String downloadFileFromS3(String filename) {
         String localName = "downloaded_" + filename.replace("/", "_"); 
 
@@ -135,9 +143,10 @@ public class ManagerApplication {
     }
     public static void uploadFileToS3(String bucketName, String keyName, String htmlFile) {
         PutObjectRequest putObject = PutObjectRequest.builder()
-                .bucket(bucketName)
-                .key(keyName)
-                .build();
+            .bucket(bucketName)
+            .key(keyName)
+            .contentType("text/html")
+            .build();
         AWSinstance.getS3().putObject(putObject, RequestBody.fromString(htmlFile));
     }
 
@@ -147,7 +156,8 @@ public class ManagerApplication {
         List<JSONObject> jsonList = new ArrayList<>();
 
         try {
-            List<String> lines = Files.readAllLines(Paths.get(fileName));
+            //List<String> lines = Files.readAllLines(Paths.get(fileName));
+            String[] lines = Files.readString(Paths.get(fileName)).split("\\r?\\n|\\r");
 
             for (String line : lines) {
 
@@ -172,114 +182,133 @@ public class ManagerApplication {
 
                 jsonList.add(obj);
             }
-        
+
         } catch (Exception e) {
             System.out.println("Error reading input file: " + e.getMessage());
         }
-    
+
         return jsonList;
     }
 
-//-------------------------------------------send tasks to workers
+    //-------------------------------------------send tasks to workers
 
     public static void sendTaskToWorkers(JSONObject taskJson) {
 
-    SendMessageRequest sendMsg = SendMessageRequest.builder()
+        SendMessageRequest sendMsg = SendMessageRequest.builder()
             .queueUrl(ManagerWorkersQueueURL)
             .messageBody(taskJson.toString())
             .build(); 
 
-    AWSinstance.getSqs().sendMessage(sendMsg);
+        AWSinstance.getSqs().sendMessage(sendMsg);
 
-    System.out.println("Sent task to workers: " + taskJson.toString());
-}
-//--------------------------------------------get running worker instances
-public static int getRunningWorkersCount() {
+        System.out.println("Sent task to workers: " + taskJson.toString());
+    }
+    //--------------------------------------------get running worker instances
+    public static int getRunningWorkersCount() {
 
-    Filter filter = Filter.builder()
-            .name("tag:Role")
-            .values("Worker")
-            .build();
+        Filter filter = Filter.builder()
+        .name("tag:Role")
+        .values("Worker")
+        .build();
 
-    DescribeInstancesResponse res =
-            AWSinstance.getEc2().describeInstances(
-                    DescribeInstancesRequest.builder()
-                            .filters(filter)
-                            .build()
+        DescribeInstancesResponse res =AWSinstance.getEc2().describeInstances(
+            DescribeInstancesRequest.builder()
+                .filters(filter)
+                .build()
             );
 
-    int count = 0;
+        int count = 0;
 
-    for (Reservation r : res.reservations()) {
-        for (Instance i : r.instances()) {
+        for (Reservation r : res.reservations()) {
+            for (Instance i : r.instances()) {
+                if (i.state().nameAsString().equals("running")) {
+                    count++;
+                }
+            }
+        }
 
-            if (i.state().nameAsString().equals("running")) {
-                count++;
+        return count;
+    }
+
+    public static List<String> getInstancesOfTag(String tagValue) {
+        List<String> instanceIds = new ArrayList<>();
+    
+        Filter filter = Filter.builder()
+        .name("tag:Role")
+        .values(tagValue)
+        .build();
+    
+        DescribeInstancesRequest request = DescribeInstancesRequest.builder()
+        .filters(filter)
+        .build();
+    
+        DescribeInstancesResponse response = AWSinstance.getEc2().describeInstances(request);
+    
+        for (Reservation reservation : response.reservations()) {
+            for (Instance instance : reservation.instances()) {
+                instanceIds.add(instance.instanceId());
+            }
+        }
+    
+        return instanceIds;
+    }
+
+
+    //--------------------------------------------create worker instances
+    public static void createWorkerInstances(int numberOfWorkers) {
+        String workerScript = "#!/bin/bash\n"
+                            // 1. Install Java
+                            + "yum update -y\n"
+                            + "yum install java-17-amazon-corretto -y\n"
+                            + "mkdir -p /home/ec2-user/app\n"
+                            + "aws s3 cp s3://" + AWSinstance.bucketName + "/system.jar /home/ec2-user/app/system.jar\n"
+                            + "nohup java -cp /home/ec2-user/app/system.jar dsp1.WorkerApplication.WorkerApplication > /home/ec2-user/app/worker.log 2>&1 &";
+        for(int i = 0 ; i < numberOfWorkers; i++)
+            AWSinstance.createEC2(workerScript, "Worker", 1);
+        System.out.println("Created " + numberOfWorkers + " worker instances.");
+    }
+
+
+    //--------------------------------------- parse and distribute tasks to workers
+    public static int AvailableWorker() {
+        int maxWorkers = 7;
+        int runningWorkers = getRunningWorkersCount();
+        return maxWorkers - runningWorkers;
+    }
+
+
+    public static void startWorkersIfNeeded(List<JSONObject> tasks, int tasksPerWorker) {
+
+        int runningWorkers = getRunningWorkersCount();
+        int requiredWorkers = (int) Math.ceil((double) tasks.size() / tasksPerWorker);
+
+        System.out.println("Workers needed = " + requiredWorkers);
+        System.out.println("Workers running = " + runningWorkers);
+
+        int toLaunch = requiredWorkers - runningWorkers;
+
+        if (toLaunch > 0) {
+            int place = AvailableWorker(); 
+            if (place == 0) {
+                System.out.println(" Maximum 18 workers reached. Cannot launch more.");
+            } else {
+
+                int finalLaunchNumber = Math.min(toLaunch, place);
+
+                System.out.println("Launching " + finalLaunchNumber + " workers (max allowed).");
+
+                createWorkerInstances(finalLaunchNumber);
             }
         }
     }
-
-    return count;
-}
-
-//--------------------------------------------create worker instances
-  public static void createWorkerInstances(int numberOfWorkers) {
-    String workerScript = "#!/bin/bash\n"
-        // 1. Install Java
-        + "yum update -y\n"
-        + "yum install java-17-amazon-corretto -y\n"
-        + "mkdir -p /home/ec2-user/app\n"
-        + "aws s3 cp s3://" + AWSinstance.bucketName + "/system.jar /home/ec2-user/app/system.jar\n"
-        + "nohup java -cp /home/ec2-user/app/system.jar dsp1.WorkerApplication.WorkerApplication > /home/ec2-user/app/worker.log 2>&1 &";
-    
-    AWSinstance.createEC2(workerScript, "Worker", numberOfWorkers);
-    System.out.println("Created " + numberOfWorkers + " worker instances.");
-}
-
-
-  //--------------------------------------- parse and distribute tasks to workers
-   public static int AvailableWorker() {
-    int maxWorkers = 7;
-    int runningWorkers = getRunningWorkersCount();
-    return maxWorkers - runningWorkers;
-
-}
-
-  
-  public static void startWorkersIfNeeded(List<JSONObject> tasks, int tasksPerWorker) {
-
-    int runningWorkers = getRunningWorkersCount();
-    int requiredWorkers = (int) Math.ceil((double) tasks.size() / tasksPerWorker);
-
-    System.out.println("Workers needed = " + requiredWorkers);
-    System.out.println("Workers running = " + runningWorkers);
-
-    int toLaunch = requiredWorkers - runningWorkers;
-
-    if (toLaunch > 0) {
-
-        int place = AvailableWorker(); 
-        if (place == 0) {
-            System.out.println(" Maximum 18 workers reached. Cannot launch more.");
-        } else {
-
-            int finalLaunchNumber = Math.min(toLaunch, place);
-
-            System.out.println("Launching " + finalLaunchNumber + " workers (max allowed).");
-
-            createWorkerInstances(finalLaunchNumber);
-        }
-    }
-
-    System.out.println("Distributed " + tasks.size() + " tasks to workers.");
-}
     private static void sendTasksToWorkers(List<JSONObject> tasks){
         for(JSONObject task : tasks) {
             sendTaskToWorkers(task);
         }
+        System.out.println("Distributed " + tasks.size() + " tasks to workers.");
     }   
 
-    
+
     ////////////////////////////////////////////handle worker messages////////////////////////////////////////////
     private static void handleNewTaskMessage(Message msg) {
         JSONObject obj = new JSONObject(msg.body());
@@ -287,6 +316,10 @@ public static int getRunningWorkersCount() {
         String taskid = obj.getString("taskId");
         String key = obj.getString("key");
         int workersToFileRatio = obj.getInt("workers");
+        String terminate = obj.optString("terminate");
+        if(terminate.equals("true")){
+            toTerminate = true;
+        }
 
         System.out.println("Received new task:");
         System.out.println("- task id: " + taskid);
@@ -294,7 +327,7 @@ public static int getRunningWorkersCount() {
         System.out.println("- file key: " + key);
 
         // 0. add to task status map
-        jobIdToTasks.put(taskid, new ArrayList<>());
+        jobIdToResults.put(taskid, new ArrayList<>());
         System.out.println("Downloaded input file1  ");
 
         // 1. Download file
@@ -312,6 +345,7 @@ public static int getRunningWorkersCount() {
 
         // 4. Distribute tasks to workers
         sendTasksToWorkers(tasks);
+        jobsReceived++;
     }
 
     private static void handleTerminateMessage(Message msg) {
@@ -319,67 +353,91 @@ public static int getRunningWorkersCount() {
         System.exit(0);
     }
 
-    private static void handleDoneMessage(Message msg) {
+        private static void handleDoneMessage(Message msg) {
         JSONObject obj = new JSONObject(msg.body());
         String taskId = obj.getString("taskId");
         String resultLocation = obj.getString("result");
-        jobIdToTasks.get(taskId).add(resultLocation);
-        
-        if (jobIdToTasks.get(taskId).size() == jobIdToExpectedTasks.get(taskId)) {
+        jobIdToResults.get(taskId).add(resultLocation);
+        if (jobIdToResults.get(taskId).size() == jobIdToExpectedTasks.get(taskId)) {
             System.out.println("All tasks for job " + taskId + " are done. Creating summary...");
-            
-            List<String> results = jobIdToTasks.get(taskId);
+
+            List<String> results = jobIdToResults.get(taskId);
             String summaryKey = "results/" + taskId + "_summary.html";
 
             makeSummaryFile(taskId, results, summaryKey);
-             System.out.println("Summary file created: " );
-           JSONObject resultMsg = new JSONObject();
+            System.out.println("Summary file created: " );
+            JSONObject resultMsg = new JSONObject();
             resultMsg.put("type", "jobDone");
             resultMsg.put("taskId", taskId);
             resultMsg.put("s3Bucket", AWSinstance.bucketName);     
             resultMsg.put("outputS3Key", summaryKey);            
-            
+
             sendMessageToLocal(resultMsg.toString());
             System.out.println("Sent jobDone to LocalApp.");
 
-            jobIdToTasks.remove(taskId);
+            jobIdToResults.remove(taskId);
             jobIdToExpectedTasks.remove(taskId);
+            jobsCompleted++;
         }
 
     } 
 
 
-   public static void makeSummaryFile(String taskId, List<String> resultKeys, String summaryKey) {
-    StringBuilder html = new StringBuilder();
-    html.append("<html><head><title>Results for ").append(taskId).append("</title></head><body>");
-    html.append("<h1>Analysis Summary for Task: ").append(taskId).append("</h1>");
-    html.append("<hr>");
+    public static void makeSummaryFile(String taskId, List<String> resultKeys, String summaryKey) {
+        StringBuilder html = new StringBuilder();
+        html.append("<html><head><title>Results for ").append(taskId).append("</title></head><body>");
+        html.append("<h1>Analysis Summary for Task: ").append(taskId).append("</h1>");
+        html.append("<hr>");
 
-    for (String key : resultKeys) {
-        try {
-            GetObjectRequest getObjectRequest = GetObjectRequest.builder()
+        for (String key : resultKeys) {
+            try {
+                GetObjectRequest getObjectRequest = GetObjectRequest.builder()
                     .bucket(AWSinstance.bucketName)
                     .key(key)
                     .build();
-            
-            String content = AWSinstance.getS3().getObjectAsBytes(getObjectRequest).asUtf8String();
-            
-            html.append("<div style='border:1px solid #ccc; margin:10px; padding:10px;'>");
-            html.append(content.replace("\n", "<br>")); // 
-            html.append("</div>");
-            
-        } catch (Exception e) {
-            html.append("<p style='color:red;'>Failed to retrieve part: ").append(key).append("</p>");
+
+                String content = AWSinstance.getS3().getObjectAsBytes(getObjectRequest).asUtf8String();
+
+                html.append("<div style='border:1px solid #ccc; margin:10px; padding:10px;'>");
+                html.append(content.replace("\n", "<br>")); // 
+                html.append("</div>");
+
+            } catch (Exception e) {
+                html.append("<p style='color:red;'>Failed to retrieve part: ").append(key).append("</p>");
+            }
+        }
+        html.append("</body></html>");
+
+        uploadFileToS3(AWSinstance.bucketName, summaryKey, html.toString());
+        System.out.println("Summary file uploaded to: " + summaryKey);
+    }
+
+   //------------------------------Terminate System---------------------------------
+    private static void terminate(){
+        System.out.println("Terminating system...");
+        List<String> workersInstancesIds = getInstancesOfTag("Worker");
+        for(String id : workersInstancesIds){
+            terminateEC2(id);
+            System.out.println("Terminated instance: "+ id);
+        } 
+        System.out.println("Manager terminated the system.");
+        System.out.println("Exiting...");
+        terminateEC2(getInstancesOfTag("Manager").get(0));
+        System.exit(0);
+    }
+
+    private static void terminateEC2(String instanceId){
+        try{
+        TerminateInstancesRequest request = TerminateInstancesRequest.builder()
+            .instanceIds(instanceId)
+            .build();
+        AWSinstance.getEc2().terminateInstances(request);
+        } catch (Exception e){
+            System.out.printf("ERROR terminating instance %s: %s%n ", instanceId, e.getMessage());
         }
     }
-    
-    html.append("</body></html>");
 
-    uploadFileToS3(AWSinstance.bucketName, summaryKey, html.toString());
-    System.out.println("Summary file uploaded to: " + summaryKey);
-}
-
-// ----------------------------Main---------------------------------    
+    // ----------------------------Main---------------------------------    
 
     public static void main(String[] args) {
 
@@ -388,7 +446,7 @@ public static int getRunningWorkersCount() {
 
         createQueue(MANAGER_TO_LOCAL);
         ManagerLocalQueueURL = getQueueUrl(MANAGER_TO_LOCAL);
-        
+
         createQueue(WORKERS_TO_MANAGER);
         WorkersManagerQueueURL = getQueueUrl(WORKERS_TO_MANAGER);
 
@@ -402,32 +460,49 @@ public static int getRunningWorkersCount() {
             // 2) Receive message from LocalApps
             Message msgFromLocal = receiveMessage(LocalManagerQueueURL);
             if (msgFromLocal != null){
+                try {
+                    JSONObject obj = new JSONObject(msgFromLocal.body());
+                    String type = obj.getString("type");
+                    System.out.println(msgFromLocal.body());
 
-                JSONObject obj = new JSONObject(msgFromLocal.body());
-                String type = obj.getString("type");
-               System.out.println( msgFromLocal.body());
+                    if (type.equals("newTask")) {
+                        handleNewTaskMessage(msgFromLocal);
 
-                if (type.equals("newTask")) {
-                    handleNewTaskMessage(msgFromLocal);
-                }
-                else if (type.equals("terminate")) {
-                    handleTerminateMessage(msgFromLocal);
-                }           
+                    } else if (type.equals("terminate")) {
+                        handleTerminateMessage(msgFromLocal);
+                    } 
+
+                    deleteMessage(LocalManagerQueueURL, msgFromLocal);
+
+                } catch (Exception e) {
+                    // This catches SQS API errors, JSON parsing errors, and logic errors.
+                    System.err.println("ERROR: Failed to process or delete message: " + e.getMessage());
+                }          
             }
+            
+            //----------------------------------------------------------
 
-      //----------------------------
-          System.out.println("Checking for worker messages...");
             Message msgFromWorker = receiveMessage(WorkersManagerQueueURL);
             if (msgFromWorker != null){
+                System.out.println("received message from worker: " + msgFromWorker.body());
                 JSONObject obj = new JSONObject(msgFromWorker.body());
                 String type = obj.getString("type");
                 if (type.equals("jobDone")) {
-                    handleDoneMessage(msgFromWorker);
                     deleteMessage(WORKERS_TO_MANAGER, msgFromWorker);
+                    handleDoneMessage(msgFromWorker);
                 }
             }
 
+            if (jobsReceived == jobsCompleted && jobsReceived > 0) {
+                System.out.println("All jobs completed.");
+                if(toTerminate){
+                    terminate();
+                }
+                else{
+                    jobsReceived = 0;
+                    jobsCompleted = 0;
+                }
+            }
         }
     }
-
 }
