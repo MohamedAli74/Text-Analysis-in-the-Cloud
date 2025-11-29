@@ -35,14 +35,14 @@ import software.amazon.awssdk.services.s3.model.HeadBucketRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
 public class LocalApplication{
-    
+
     //args
     private static File inputFile;
     private static String inputFileName;
     private static String outputFileName;
     private static int workersToFileRation;
     private static boolean terminate;
-    
+
     //AWS clients
     private static final AWS AWSinstance = AWS.getInstance();
     private static final Region region = Region.US_EAST_1;
@@ -52,117 +52,118 @@ public class LocalApplication{
     private static String mytaskid="";
 
     private static final Ec2Client ec2 = Ec2Client.builder()
-            .region(region)
-            .build();
-    
+                                            .region(region)
+                                            .build();
+
     private static final S3Client s3 = S3Client.builder()
-            .region(region)
-            .build();
+                                            .region(region)
+                                            .build();
 
     private static final String ManagerLocalQueueName = "ManagerToLocalQueue"; // Must match Local App's definition
     private static String ManagerLocalQueueURL;
     private static final String LocalManagerQueueName = "LocalToManagerQueue"; // Must match Local App's definition
     private static String LocalManagerQueueURL;
-    
- /////////////////////////////////////////////SQS///////////////////////////////////////
- 
-   public static String getQueueUrl(String queueName) {
-    return AWSinstance.getSqs().getQueueUrl(
-        GetQueueUrlRequest.builder()
-        .queueName(queueName)
-        .build()
-    ).queueUrl();
-}
 
- public static void sendJobToManager(String bucketName, String keyName,int workersToFileRation) {
+    /////////////////////////////////////////////SQS///////////////////////////////////////
 
-    String messageBody =
-        "{"
-            + "\"type\":\"newTask\","
-            + "\"taskId\":\"" + mytaskid + "\","
-            + "\"s3Bucket\":\"" + bucketName + "\","
-            + "\"key\":\"" + keyName + "\","
-            + "\"outputFile\":\"" + outputFileName + "\","
-            + "\"workers\":" + workersToFileRation + ","
-            + "\"terminate\":" + terminate
-        + "}";
+    public static String getQueueUrl(String queueName) {
+        return AWSinstance.getSqs().getQueueUrl(
+            GetQueueUrlRequest.builder()
+                        .queueName(queueName)
+                        .build()
+                        ).queueUrl();
+    }
+
+    public static void sendJobToManager(String bucketName, String keyName,int workersToFileRation) {
+
+        String messageBody =
+                        "{"
+                        + "\"type\":\"newTask\","
+                        + "\"taskId\":\"" + mytaskid + "\","
+                        + "\"s3Bucket\":\"" + bucketName + "\","
+                        + "\"key\":\"" + keyName + "\","
+                        + "\"outputFile\":\"" + outputFileName + "\","
+                        + "\"workers\":" + workersToFileRation + ","
+                        + "\"terminate\":" + terminate
+                        + "}";
 
         System.out.println("Sending job to Manager: " + messageBody);
-        
-    SendMessageRequest sendMsg = SendMessageRequest.builder()
-            .queueUrl(LocalManagerQueueURL)
-            .messageBody(messageBody)
-            .build();
 
-    AWSinstance.getSqs().sendMessage(sendMsg);
+        SendMessageRequest sendMsg = SendMessageRequest.builder()
+                                        .queueUrl(LocalManagerQueueURL)
+                                        .messageBody(messageBody)
+                                        .build();
 
-}
+        AWSinstance.getSqs().sendMessage(sendMsg);
 
-
-/////////////////////////////////////////AWS EC2 Methods//////////////////////////////////////
-public static String getOrCreateManagerInstance() {
-    List<String> managers = listManagerInstances();
-    
-
-    if (!managers.isEmpty()) {
-        String existing = managers.get(0);
-        System.out.println(" Manager instance already running: " + existing);
-        return existing;
     }
-    System.out.println(" No manager found. Launching new one...");
-    
-    uploadManagerJar(S3_BUCKET_NAME);
-    String userDataScript = """
-        #!/bin/bash
-        sudo yum update -y
-        sudo yum install -y java-17-amazon-corretto
-        mkdir -p /home/ec2-user/app
-        aws s3 cp s3://%s/system.jar /home/ec2-user/app/system.jar
-        nohup java -jar /home/ec2-user/app/system.jar > /home/ec2-user/app/log.txt 2>&1 &
-        """.formatted(S3_BUCKET_NAME);
 
-    String script = Base64.getEncoder().encodeToString(userDataScript.getBytes());
-    String newId = AWSinstance.createEC2(script, "Manager", 1);
-    
-    System.out.println(" Launched Manager with ID: " + newId);
-    return newId;
-}
 
-public static List<String> listManagerInstances() {
-    List<String> instanceIds = new ArrayList<>();
-    
-    Filter tagFilter = Filter.builder()
-    .name("tag:" + MANAGER_TAG_KEY) // Format for tag filtering is always 'tag:<key>'
-    .values(MANAGER_TAG_VALUE)
-    .build();
+    /////////////////////////////////////////AWS EC2 Methods//////////////////////////////////////
+    public static String getOrCreateManagerInstance() {
+        List<String> managers = listManagerInstances();
 
-    DescribeInstancesRequest request = DescribeInstancesRequest.builder()
-    .filters(tagFilter)
-    .build();
-    DescribeInstancesResponse response = ec2.describeInstances(request);
-    for (Reservation reservation : response.reservations()) {
-        for (Instance instance : reservation.instances()) {
-            System.out.printf(
-                "Found instance with ID %s, " +
-                "AMI %s, " +
-                "type %s, " +
-                "state %s " +
-                "and monitoring state %s%n",
-                instance.instanceId(),
-                instance.imageId(),
-                instance.instanceType(),
-                instance.state().name(),
-                instance.monitoring().state());//for debugging purposes
+
+        if (!managers.isEmpty()) {
+            String existing = managers.get(0);
+            System.out.println(" Manager instance already running: " + existing);
+            return existing;
+        }
+        System.out.println(" No manager found. Launching new one...");
+
+        uploadManagerJar(S3_BUCKET_NAME);
+        String userDataScript = """
+                                #!/bin/bash
+                                sudo yum update -y
+                                sudo yum install -y java-17-amazon-corretto
+                                mkdir -p /home/ec2-user/app
+                                aws s3 cp s3://%s/system.jar /home/ec2-user/app/system.jar
+                                nohup java -jar /home/ec2-user/app/system.jar > /home/ec2-user/app/log.txt 2>&1 &
+                                """.formatted(S3_BUCKET_NAME);
+
+        String script = Base64.getEncoder().encodeToString(userDataScript.getBytes());
+        String newId = AWSinstance.createEC2(script, "Manager", 1);
+
+        System.out.println(" Launched Manager with ID: " + newId);
+        return newId;
+    }
+
+    public static List<String> listManagerInstances() {
+        List<String> instanceIds = new ArrayList<>();
+
+        Filter tagFilter = Filter.builder()
+                            .name("tag:" + MANAGER_TAG_KEY) // Format for tag filtering is always 'tag:<key>'
+                            .values(MANAGER_TAG_VALUE)
+                            .build();
+
+        DescribeInstancesRequest request = DescribeInstancesRequest.builder()
+                            .filters(tagFilter)
+                            .build();
+        DescribeInstancesResponse response = ec2.describeInstances(request);
+        for (Reservation reservation : response.reservations()) {
+            for (Instance instance : reservation.instances()) {
+                System.out.printf(
+                    "Found instance with ID %s, " +
+                    "AMI %s, " +
+                    "type %s, " +
+                    "state %s " +
+                    "and monitoring state %s%n",
+                    instance.instanceId(),
+                    instance.imageId(),
+                    instance.instanceType(),
+                    instance.state().name(),
+                    instance.monitoring().state());//for debugging purposes
                 if(instance.state().name() == InstanceStateName.RUNNING){
-                    instanceIds.add(instance.instanceId());}
+                    instanceIds.add(instance.instanceId());
+                }
             }
         }
         return instanceIds;
     }
-    
-    
+
+
     //////////////////////////////////////////AWS S3 Methods//////////////////////////////////////
-    
+
     public static void uploadManagerJar(String bucketName) {
         System.out.println("Uploading Manager JAR to S3...");
 
@@ -181,14 +182,14 @@ public static List<String> listManagerInstances() {
         // 4. Upload
         try {
             PutObjectRequest putOb = PutObjectRequest.builder()
-                    .bucket(bucketName)
-                    .key(s3Key)
-                    .build();
+                        .bucket(bucketName)
+                        .key(s3Key)
+                        .build();
 
             s3.putObject(putOb, RequestBody.fromFile(jarFile));
-            
+
             System.out.println("Manager JAR uploaded successfully to: s3://" + bucketName + "/" + s3Key);
-            
+
         } catch (Exception e) {
             System.err.println("Failed to upload JAR: " + e.getMessage());
             throw new RuntimeException(e);
@@ -197,30 +198,30 @@ public static List<String> listManagerInstances() {
 
     public static File getFileFromResources(String fileName) {
         URL resource = LocalApplication.class.getClassLoader().getResource(fileName);
-        
+
         if (resource == null) {
             throw new IllegalArgumentException("File not found in resources folder: " + fileName);
         }
-        
+
         try {
             return new File(resource.toURI());
         } catch (Exception e) {
             throw new RuntimeException("Failed to load file from resources", e);
         }
     }
-    
+
     public static void CheckPucketExistence() {
         try {
             s3.headBucket(HeadBucketRequest.builder().bucket(S3_BUCKET_NAME).build());
             System.out.println("Bucket already exists: " + S3_BUCKET_NAME);
-            
-        } catch (NoSuchBucketException e) {
-            System.out.println("Bucket does not exist. Creating bucket: " + S3_BUCKET_NAME);
-            CreateBucketRequest createBucketRequest = CreateBucketRequest.builder()
-                    .bucket(S3_BUCKET_NAME)
-                    .build();
-            s3.createBucket(createBucketRequest);
-            System.out.println("Bucket created: " + S3_BUCKET_NAME);
+
+            } catch (NoSuchBucketException e) {
+                System.out.println("Bucket does not exist. Creating bucket: " + S3_BUCKET_NAME);
+                CreateBucketRequest createBucketRequest = CreateBucketRequest.builder()
+                                                            .bucket(S3_BUCKET_NAME)
+                                                            .build();
+                s3.createBucket(createBucketRequest);
+                System.out.println("Bucket created: " + S3_BUCKET_NAME);
         } catch (S3Exception e) {
             if (e.statusCode() == 404) {
                 throw new IllegalArgumentException("FATAL: S3 bucket " + S3_BUCKET_NAME + " does not exist.");//TODO: change
@@ -235,59 +236,59 @@ public static List<String> listManagerInstances() {
             throw new IllegalArgumentException("FATAL: Input file not found" + inputFileName);
         }
         PutObjectRequest putObject = PutObjectRequest.builder()
-                .bucket(bucketName)
-                .key(keyName)
-                .build();
+                                            .bucket(bucketName)
+                                            .key(keyName)
+                                            .build();
         s3.putObject(putObject, RequestBody.fromFile(inputFile));
     }
 
-//-----------------------for responses from manager------------------------------
-public static Message receiveMessage(String queueUrl) {
-    ReceiveMessageRequest request = ReceiveMessageRequest.builder()
-            .queueUrl(queueUrl)
-            .maxNumberOfMessages(1)
-            .waitTimeSeconds(2)
-            .build();
-    ReceiveMessageResponse response = AWSinstance.getSqs().receiveMessage(request);
-    List<Message> messages = response.messages();
-    if (messages != null && !messages.isEmpty()) {
-        return messages.get(0);
+    //-----------------------for responses from manager------------------------------
+    public static Message receiveMessage(String queueUrl) {
+        ReceiveMessageRequest request = ReceiveMessageRequest.builder()
+                                                    .queueUrl(queueUrl)
+                                                    .maxNumberOfMessages(1)
+                                                    .waitTimeSeconds(2)
+                                                    .build();
+        ReceiveMessageResponse response = AWSinstance.getSqs().receiveMessage(request);
+        List<Message> messages = response.messages();
+        if (messages != null && !messages.isEmpty()) {
+            return messages.get(0);
+        }
+        return null;
+
     }
-    return null;
-
-}
 
 
-//---------delete message from queue-----------------------+
-public static void deleteMessage(String queueURL, Message msg) {
-    AWSinstance.getSqs().deleteMessage(
-        DeleteMessageRequest.builder()
-            .queueUrl(queueURL)
-            .receiptHandle(msg.receiptHandle())
-            .build()
-    );
-}
+    //---------delete message from queue-----------------------+
+    public static void deleteMessage(String queueURL, Message msg) {
+        AWSinstance.getSqs().deleteMessage(
+            DeleteMessageRequest.builder()
+                .queueUrl(queueURL)
+                .receiptHandle(msg.receiptHandle())
+                .build()
+                );
+    }
 
-public static File getFileFromS3(String bucketName, String keyName, String downloadPath) {
-    File outputFile = new File(downloadPath);
-    try {
-        s3.getObject(
+    public static File getFileFromS3(String bucketName, String keyName, String downloadPath) {
+        File outputFile = new File(downloadPath);
+        try {
+            s3.getObject(
             software.amazon.awssdk.services.s3.model.GetObjectRequest.builder()
                 .bucket(bucketName)
                 .key(keyName)
                 .build(),
-            outputFile.toPath()
-        );
-    } catch (Exception e) {
-        e.printStackTrace();
-        throw new RuntimeException("Failed to download file from S3", e);
+                outputFile.toPath()
+            );
+        } catch (Exception e) {
+            e.printStackTrace();
+            throw new RuntimeException("Failed to download file from S3", e);
+        }
+        return outputFile;
     }
-    return outputFile;
-}
 
 
-/////////////////////////////////////////MAIN//////////////////////////////////////////////
-        public static void main(String args[]) {
+    /////////////////////////////////////////MAIN//////////////////////////////////////////////
+    public static void main(String args[]) {
 
         if (args.length < 3) {
             System.err.println(" LocalApplication <inputFile> <outputFile> <workers> [terminate]");
@@ -314,38 +315,40 @@ public static File getFileFromS3(String bucketName, String keyName, String downl
         System.out.println("Uploading input file to S3 with key: " + uniqueS3Key);
         uploadFileToS3(S3_BUCKET_NAME, uniqueS3Key);
         sendJobToManager(S3_BUCKET_NAME, uniqueS3Key, workersToFileRation);
-        
-    while (true) {
 
-    Message msg = receiveMessage(ManagerLocalQueueName);
-    
-    if (msg != null) {
-        String body = msg.body();
-        System.out.println("Received message from Manager: " + body);
-        JSONObject obj = new JSONObject(body);    
-        String type = obj.getString("type");
-        String taskId = obj.getString("taskId");
-        String outputS3Key = obj.getString("outputS3Key");
-        String bucketName = obj.getString("s3Bucket");
-        String outputFileLocal = "output_" + mytaskid + ".html";  
-        
-        System.out.println(msg.body().toString());
-       if (taskId.equals(mytaskid)) {
-             System.out.println("Task " + mytaskid + " completed.");
-                              
-            getFileFromS3(bucketName, outputS3Key, outputFileName);
-            // Download the result file from S3
-            System.out.println(" Result saved locally to: " + new File(outputFileLocal).getAbsolutePath());
-            deleteMessage(ManagerLocalQueueURL, msg);
-                            
-            System.exit(0);
-                        
+        while (true) {
+
+            Message msg = receiveMessage(ManagerLocalQueueName);
+
+            if (msg != null) {
+                String body = msg.body();
+                System.out.println("Received message from Manager: " + body);
+                JSONObject obj = new JSONObject(body);    
+                String type = obj.getString("type");
+                String taskId = obj.getString("taskId");
+                String outputS3Key = obj.getString("outputS3Key");
+                String bucketName = obj.getString("s3Bucket");
+                String outputFileLocal = "output_" + mytaskid + ".html";  
+
+                System.out.println(msg.body().toString());
+                if (taskId.equals(mytaskid)) {
+                    System.out.println("Task " + mytaskid + " completed.");
+
+                    getFileFromS3(bucketName, outputS3Key, outputFileName);
+                    // Download the result file from S3
+                    System.out.println(" Result saved locally to: " + new File(outputFileLocal).getAbsolutePath());
+                    deleteMessage(ManagerLocalQueueURL, msg);
+
+                    System.exit(0);
+
+                }
+
+            } else {
+                try {
+                        Thread.sleep(200); 
+                } catch (Exception e) {}
+            }
         }
-       
-    } else {
-        try { Thread.sleep(200); } catch (Exception e) {}
-    }
-}
 
     }
 }
