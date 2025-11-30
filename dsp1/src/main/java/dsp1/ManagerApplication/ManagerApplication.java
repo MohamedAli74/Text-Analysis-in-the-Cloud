@@ -348,6 +348,8 @@ public class ManagerApplication {
         jobsReceived++;
     }
 
+
+
     private static void handleTerminateMessage(Message msg) {
         System.out.println("Terminate signal received.");
         System.exit(0);
@@ -437,6 +439,17 @@ public class ManagerApplication {
         }
     }
 
+    private static void handlefailedjobMessage(Message msg) {
+        JSONObject obj = new JSONObject(msg.body());
+        String taskId = obj.getString("taskId");
+        String error = obj.getString("error");
+        System.out.println("Worker reported failed job for task " + taskId + ": " + error);
+       //todoo
+
+
+    
+    }
+
     // ----------------------------Main---------------------------------    
 
     public static void main(String[] args) {
@@ -491,6 +504,12 @@ public class ManagerApplication {
                     deleteMessage(WORKERS_TO_MANAGER, msgFromWorker);
                     handleDoneMessage(msgFromWorker);
                 }
+
+                 if (type.equals("failedjob")) {
+                    deleteMessage(WORKERS_TO_MANAGER, msgFromWorker);
+                    handlefailedjobMessage(msgFromWorker);
+                }
+                
             }
 
             if (jobsReceived == jobsCompleted && jobsReceived > 0) {
