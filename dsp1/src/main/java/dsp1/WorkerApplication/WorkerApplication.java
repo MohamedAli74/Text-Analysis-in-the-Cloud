@@ -28,154 +28,157 @@ public class WorkerApplication {
     private static String currentTaskId;
 
     public static void main(String[] args) {
-    ManagerWorkerQueueURL = AWSinstance.getSqs().getQueueUrl(GetQueueUrlRequest.builder()
-    .queueName(ManagerWorkerQueueName)
-    .build()).queueUrl();
+        ManagerWorkerQueueURL = AWSinstance.getSqs().getQueueUrl(GetQueueUrlRequest.builder()
+            .queueName(ManagerWorkerQueueName)
+            .build()).queueUrl();
 
-    WorkerManagerQueueURL = AWSinstance.getSqs().getQueueUrl(GetQueueUrlRequest.builder()
-    .queueName(WorkerManagerQueueName)
-    .build()).queueUrl();
+        WorkerManagerQueueURL = AWSinstance.getSqs().getQueueUrl(GetQueueUrlRequest.builder()
+            .queueName(WorkerManagerQueueName)
+            .build()).queueUrl();
 
-    while(true) { 
-    System.out.println("Worker is waiting for tasks...");
-    Message msg = receiveMessage(ManagerWorkerQueueURL);
-    if (msg != null) {
-    System.out.println("Worker received a task message.");
-    System.out.println("Message body: " + msg.body());
-    JSONObject messageJson = new JSONObject(msg.body());
-    System.out.println("Worker received message: " + messageJson.toString());
-    currentTaskId = messageJson.getString("taskId");
-    String url = messageJson.getString("url");
-    String analysis = messageJson.getString("analysis");
-    erorrMessage="";
-    
-    File taskFile = downloadFileFromURL(url, currentTaskId, "./");
-    if(erorrMessage!=""){
-        deleteMessage(ManagerWorkerQueueURL, msg);    
-        sendMessageToManager(new JSONObject()
-        .put("taskId", currentTaskId)
-        .put("type", "failedjob")
-        .put("error", erorrMessage)
-        .put(analysis, msg)
-        .toString()
-        );
-      continue;
-    }
-    File resultFile = analyseFile(taskFile, analysis, currentTaskId); 
-    if(erorrMessage!=""){
-        deleteMessage(ManagerWorkerQueueURL, msg);    
-        sendMessageToManager(new JSONObject()
-        .put("taskId", currentTaskId)
-        .put("type", "failedjob")
-        .put("error", erorrMessage)
-        .put(analysis, msg)
-        .toString()
-        );
-        continue;
-    }
-     else {
-    System.out.println("Analysis complete for task" );   
-    String buckename = "dsp-assignment1-12025111913";//NOTE
-    System.out.println("starting upload to s3...");
-    String keyName =  "results/" + currentTaskId + "_output.txt_" + url.replace('/','-')+ "_" + analysis;
-    uploadFileToS3(resultFile, keyName);
-    deleteMessage(ManagerWorkerQueueURL, msg);    
-    sendMessageToManager(new JSONObject()
-    .put("taskId", currentTaskId)
-    .put("type", "jobDone")
-    .put("result", keyName)
-    .put("url", url)
-    .toString()
-    );}}}          
+        while(true) { 
+            System.out.println("Worker is waiting for tasks...");
+            Message msg = receiveMessage(ManagerWorkerQueueURL);
+            if (msg != null) {
+                System.out.println("Worker received a task message.");
+                System.out.println("Message body: " + msg.body());
+                JSONObject messageJson = new JSONObject(msg.body());
+                System.out.println("Worker received message: " + messageJson.toString());
+                currentTaskId = messageJson.getString("taskId");
+                String url = messageJson.getString("url");
+                String analysis = messageJson.getString("analysis");
+                erorrMessage="";
+                
+                File taskFile = downloadFileFromURL(url, currentTaskId, "./");
+                if(!erorrMessage.equals("")){
+                    deleteMessage(ManagerWorkerQueueURL, msg);    
+                    sendMessageToManager(new JSONObject()
+                        .put("taskId", currentTaskId)
+                        .put("type", "failedjob")
+                        .put("error", erorrMessage)
+                        .put(analysis, msg)
+                        .toString()
+                        );
+                    continue;
+                }
+                File resultFile = analyseFile(taskFile, analysis, currentTaskId); 
+                if(!erorrMessage.equals("")){
+                    deleteMessage(ManagerWorkerQueueURL, msg);    
+                    sendMessageToManager(new JSONObject()
+                        .put("taskId", currentTaskId)
+                        .put("type", "failedjob")
+                        .put("error", erorrMessage)
+                        .put(analysis, msg)
+                        .toString()
+                        );
+                    continue;
+                }
+                else {
+                    System.out.println("Analysis complete for task" );   
+                    String buckename = "dsp-assignment1-12025111913";//NOTE
+                    System.out.println("starting upload to s3...");
+                    String keyName =  "results/" + currentTaskId + "_output.txt_" + url.replace('/','-')+ "_" + analysis;
+                    uploadFileToS3(resultFile, keyName);
+                    deleteMessage(ManagerWorkerQueueURL, msg);    
+                    sendMessageToManager(new JSONObject()
+                    .put("taskId", currentTaskId)
+                    .put("type", "jobDone")
+                    .put("result", keyName)
+                    .put("url", url)
+                    .toString()
+                    );
+                }
+            }
+        }          
     }
 
     public static void sendMessageToManager(String messageBody) {
-    
-    try {
-        AWSinstance.getSqs().sendMessage(builder -> builder
-    .queueUrl(WorkerManagerQueueURL)
-    .messageBody(messageBody)
-    );}
-    catch (Exception e) {
-        erorrMessage="Failed to send message to manager: " + e.getMessage();
-        System.err.println(erorrMessage);
-    }
-
+        try {
+            AWSinstance.getSqs().sendMessage(builder -> builder
+                .queueUrl(WorkerManagerQueueURL)
+                .messageBody(messageBody)
+                );
+        }
+        catch (Exception e) {
+            erorrMessage="Failed to send message to manager: " + e.getMessage();
+            System.err.println(erorrMessage);
+        }
     }
 
 
     public static Message receiveMessage(String queueURL) {
-    ReceiveMessageRequest req =
-    ReceiveMessageRequest.builder()
-    .queueUrl(queueURL)
-    .maxNumberOfMessages(1)
-    .waitTimeSeconds(10)
-    .build();
+        ReceiveMessageRequest req =
+        ReceiveMessageRequest.builder()
+            .queueUrl(queueURL)
+            .maxNumberOfMessages(1)
+            .waitTimeSeconds(10)
+            .build();
 
-    var msgs = AWSinstance.getSqs().receiveMessage(req).messages();
+        var msgs = AWSinstance.getSqs().receiveMessage(req).messages();
 
-    if (msgs.isEmpty())
-    return null;
+        if (msgs.isEmpty())
+            return null;
 
-    return msgs.get(0);
+        return msgs.get(0);
     }
 
     private static void uploadFileToS3(File file, String keyName) {
-    try {
-    AWSinstance.getS3().putObject(
-    software.amazon.awssdk.services.s3.model.PutObjectRequest.builder()
-    .bucket("dsp-assignment1-12025111913") // NOTE: hardcoded bucket name
-    .key(keyName)
-    .build(),
-    file.toPath()
-    );
-    } catch (Exception e) {
-        throw new RuntimeException("Failed to upload file to S3: " + e.getMessage());
-    }
+        try {
+            AWSinstance.getS3().putObject(
+            software.amazon.awssdk.services.s3.model.PutObjectRequest.builder()
+                .bucket("dsp-assignment1-12025111913") // NOTE: hardcoded bucket name
+                .key(keyName)
+                .build(),
+                file.toPath()
+                );
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to upload file to S3: " + e.getMessage());
+        }
     }
 
 
 
     private static File analyseFile(File file, String analysisType, String taskId) {
-    StanfordNLP nlp = StanfordNLP.getInstance();
-    File outputFile = new File("/tmp/" + taskId + "_output.txt");
+        StanfordNLP nlp = StanfordNLP.getInstance();
+        File outputFile = new File("/tmp/" + taskId + "_output.txt");
 
-    try {
-        List<String> lines = Files.readAllLines(file.toPath());
-        StringBuilder sb = new StringBuilder();
+        try {
+            List<String> lines = Files.readAllLines(file.toPath());
+            StringBuilder sb = new StringBuilder();
 
-        for (String line : lines) {
-            if (line.isBlank())
-                continue;
+            for (String line : lines) {
+                if (line.isBlank())
+                    continue;
 
-            String result;
+                String result;
 
-            switch (analysisType) {
-                case "POS":
-                    result = nlp.analyzePOS(line);
-                    break;
-                case "CONSTITUENCY":
-                    result = nlp.analyzeConstituency(line);
-                    break;
-                case "DEPENDENCY":
-                    result = nlp.analyzeDependency(line);
-                    break;
-                default:
-                    result = "Unknown analysis type: " + analysisType;
+                switch (analysisType) {
+                    case "POS":
+                        result = nlp.analyzePOS(line);
+                        break;
+                    case "CONSTITUENCY":
+                        result = nlp.analyzeConstituency(line);
+                        break;
+                    case "DEPENDENCY":
+                        result = nlp.analyzeDependency(line);
+                        break;
+                    default:
+                        result = "Unknown analysis type: " + analysisType;
+                }
+
+                sb.append("INPUT: ").append(line).append("\n");
+                sb.append("OUTPUT: ").append(result).append("\n\n");
             }
 
-            sb.append("INPUT: ").append(line).append("\n");
-            sb.append("OUTPUT: ").append(result).append("\n\n");
+            Files.writeString(outputFile.toPath(), sb.toString());
+            return outputFile;
+
+        } catch (Exception e) {
+            erorrMessage="Failed to analyze file: " ;
+            System.err.println(erorrMessage + e.getMessage());
+            return null;
         }
-
-        Files.writeString(outputFile.toPath(), sb.toString());
-        return outputFile;
-
-    } catch (Exception e) {
-        erorrMessage="Failed to analyze file: " ;
-        System.err.println(erorrMessage + e.getMessage());
-        return null;}
-}
+    }
 
 
 
@@ -195,7 +198,7 @@ public class WorkerApplication {
         }
     
 
-    private static File downloadFileFromURL(String url, String taskId, String destinationPath) {//NODE
+    private static File downloadFileFromURL(String url, String taskId, String destinationPath) {
         try{
             InputStream in = new URL(url).openStream();
             Files.copy(in, Paths.get(destinationPath + "/" + taskId + "_inputfile"), StandardCopyOption.REPLACE_EXISTING);

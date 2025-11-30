@@ -325,6 +325,11 @@ public class LocalApplication{
                 System.out.println("Received message from Manager: " + body);
                 JSONObject obj = new JSONObject(body);    
                 String type = obj.getString("type");
+                if(type.equals("blocked")){
+                    System.out.println(obj.getString("description"));
+                    deleteMessage(ManagerLocalQueueURL, msg);
+                    continue;
+                }
                 String taskId = obj.getString("taskId");
                 String outputS3Key = obj.getString("outputS3Key");
                 String bucketName = obj.getString("s3Bucket");

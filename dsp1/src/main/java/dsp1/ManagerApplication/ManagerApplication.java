@@ -7,6 +7,9 @@ import software.amazon.awssdk.services.ec2.model.Filter;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.List;
+
+import javax.json.Json;
+
 import java.util.ArrayList;
 import java.util.HashMap;
 
@@ -83,9 +86,9 @@ public class ManagerApplication {
         return msgs.get(0);
     }
 
-    //-------------------------------------- Send message to Local
+    //-------------------------------------- Send message to worker --------------------------------
 
-    public static void sendmessagetoworker(String msgBody) {
+    public static void sendMessageToWorker(String msgBody) {
         AWSinstance.getSqs().sendMessage(
             SendMessageRequest.builder()
                 .queueUrl(ManagerWorkersQueueURL)
@@ -194,12 +197,7 @@ public class ManagerApplication {
 
     public static void sendTaskToWorkers(JSONObject taskJson) {
 
-        SendMessageRequest sendMsg = SendMessageRequest.builder()
-            .queueUrl(ManagerWorkersQueueURL)
-            .messageBody(taskJson.toString())
-            .build(); 
-
-        AWSinstance.getSqs().sendMessage(sendMsg);
+        sendMessageToWorker(taskJson.toString());
 
         System.out.println("Sent task to workers: " + taskJson.toString());
     }
@@ -314,17 +312,26 @@ public class ManagerApplication {
         JSONObject obj = new JSONObject(msg.body());
         String bucket = obj.getString("s3Bucket");
         String taskid = obj.getString("taskId");
+        if(toTerminate){
+            JSONObject failObject = new JSONObject();
+            failObject.put("type", "blocked");
+            failObject.put("description", "Unable to recieve task %s\nManager will be terminating soon...".formatted(taskid));
+            sendMessageToLocal(failObject.toString());
+            deleteMessage(LocalManagerQueueURL, msg);
+            return;
+        }
         String key = obj.getString("key");
         int workersToFileRatio = obj.getInt("workers");
         String terminate = obj.optString("terminate");
         if(terminate.equals("true")){
             toTerminate = true;
         }
-
+        
         System.out.println("Received new task:");
         System.out.println("- task id: " + taskid);
         System.out.println("- bucket:  " + bucket);
         System.out.println("- file key: " + key);
+
 
         // 0. add to task status map
         jobIdToResults.put(taskid, new ArrayList<>());
@@ -481,7 +488,7 @@ public class ManagerApplication {
                     if (type.equals("newTask")) {
                         handleNewTaskMessage(msgFromLocal);
 
-                    } else if (type.equals("terminate")) {
+                    } else if (type.equals("terminate")) {//do we need this??
                         handleTerminateMessage(msgFromLocal);
                     } 
 
