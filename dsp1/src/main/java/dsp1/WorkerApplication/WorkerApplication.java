@@ -2,6 +2,7 @@ package dsp1.WorkerApplication;
 import java.io.File;
 
 import dsp1.AWS;
+import edu.stanford.nlp.io.EncodingPrintWriter.err;
 
 import org.json.JSONObject;
 
@@ -19,7 +20,7 @@ import java.nio.file.StandardCopyOption;
 
 public class WorkerApplication {
     private static final AWS AWSinstance = AWS.getInstance();
-
+    public static  String erorrMessage = "";
     private static final String WorkerManagerQueueName = "WorkersToManagerQueue";
     private static String WorkerManagerQueueURL;
     private static final String ManagerWorkerQueueName = "ManagerToWorkersQueue";
@@ -35,7 +36,7 @@ public class WorkerApplication {
     .queueName(WorkerManagerQueueName)
     .build()).queueUrl();
 
-    while(true){ 
+    while(true) { 
     System.out.println("Worker is waiting for tasks...");
     Message msg = receiveMessage(ManagerWorkerQueueURL);
     if (msg != null) {
@@ -46,29 +47,59 @@ public class WorkerApplication {
     currentTaskId = messageJson.getString("taskId");
     String url = messageJson.getString("url");
     String analysis = messageJson.getString("analysis");
+    erorrMessage="";
+    
     File taskFile = downloadFileFromURL(url, currentTaskId, "./");
+    if(erorrMessage!=""){
+        deleteMessage(ManagerWorkerQueueURL, msg);    
+        sendMessageToManager(new JSONObject()
+        .put("taskId", currentTaskId)
+        .put("type", "failedjob")
+        .put("error", erorrMessage)
+        .put(analysis, msg)
+        .toString()
+        );
+      continue;
+    }
     File resultFile = analyseFile(taskFile, analysis, currentTaskId); 
+    if(erorrMessage!=""){
+        deleteMessage(ManagerWorkerQueueURL, msg);    
+        sendMessageToManager(new JSONObject()
+        .put("taskId", currentTaskId)
+        .put("type", "failedjob")
+        .put("error", erorrMessage)
+        .put(analysis, msg)
+        .toString()
+        );
+        continue;
+    }
+     else {
     System.out.println("Analysis complete for task" );   
     String buckename = "dsp-assignment1-12025111913";//NOTE
     System.out.println("starting upload to s3...");
     String keyName =  "results/" + currentTaskId + "_output.txt_" + url.replace('/','-')+ "_" + analysis;
     uploadFileToS3(resultFile, keyName);
-    deleteMessage(ManagerWorkerQueueURL, msg);
+    deleteMessage(ManagerWorkerQueueURL, msg);    
     sendMessageToManager(new JSONObject()
     .put("taskId", currentTaskId)
     .put("type", "jobDone")
     .put("result", keyName)
+    .put("url", url)
     .toString()
-    );
-    }
-    }           
+    );}}}          
     }
 
     public static void sendMessageToManager(String messageBody) {
-    AWSinstance.getSqs().sendMessage(builder -> builder
+    
+    try {
+        AWSinstance.getSqs().sendMessage(builder -> builder
     .queueUrl(WorkerManagerQueueURL)
     .messageBody(messageBody)
-    );
+    );}
+    catch (Exception e) {
+        erorrMessage="Failed to send message to manager: " + e.getMessage();
+        System.err.println(erorrMessage);
+    }
 
     }
 
@@ -99,55 +130,53 @@ public class WorkerApplication {
     file.toPath()
     );
     } catch (Exception e) {
-    e.printStackTrace();
-    throw new RuntimeException("Failed to upload file to S3", e);
+        throw new RuntimeException("Failed to upload file to S3: " + e.getMessage());
     }
     }
 
 
 
     private static File analyseFile(File file, String analysisType, String taskId) {
-        StanfordNLP nlp = StanfordNLP.getInstance();
-        File outputFile = new File("/tmp/" + taskId + "_output.txt");
-        try {
-            List<String> lines = Files.readAllLines(file.toPath());
-            StringBuilder sb = new StringBuilder();
+    StanfordNLP nlp = StanfordNLP.getInstance();
+    File outputFile = new File("/tmp/" + taskId + "_output.txt");
 
-            for (String line : lines) {
-                if (line.isBlank())
-                    continue;
+    try {
+        List<String> lines = Files.readAllLines(file.toPath());
+        StringBuilder sb = new StringBuilder();
 
-                String result;
+        for (String line : lines) {
+            if (line.isBlank())
+                continue;
 
-                switch (analysisType) {
-                    case "POS":
-                        result = nlp.analyzePOS(line);
-                        break;
+            String result;
 
-                    case "CONSTITUENCY":
-                        result = nlp.analyzeConstituency(line);
-                        break;
-
-                    case "DEPENDENCY":
-                        result = nlp.analyzeDependency(line);
-                        break;
-
-                    default:
-                        result = "Unknown analysis type: " + analysisType;
-                }
-
-                sb.append("INPUT: ").append(line).append("\n");
-                sb.append("OUTPUT: ").append(result).append("\n\n");
+            switch (analysisType) {
+                case "POS":
+                    result = nlp.analyzePOS(line);
+                    break;
+                case "CONSTITUENCY":
+                    result = nlp.analyzeConstituency(line);
+                    break;
+                case "DEPENDENCY":
+                    result = nlp.analyzeDependency(line);
+                    break;
+                default:
+                    result = "Unknown analysis type: " + analysisType;
             }
 
-            Files.writeString(outputFile.toPath(), sb.toString());
-            return outputFile;
+            sb.append("INPUT: ").append(line).append("\n");
+            sb.append("OUTPUT: ").append(result).append("\n\n");
+        }
 
-            } catch (Exception e) {
-                e.printStackTrace();
-                throw new RuntimeException("Analysis failed", e);
-            }
-    }
+        Files.writeString(outputFile.toPath(), sb.toString());
+        return outputFile;
+
+    } catch (Exception e) {
+        erorrMessage="Failed to analyze file: " ;
+        System.err.println(erorrMessage + e.getMessage());
+        return null;}
+}
+
 
 
 
@@ -161,18 +190,22 @@ public class WorkerApplication {
                 );
             System.out.println("Message deleted successfully.");
         } catch (Exception e) {
-            System.err.println("Warning: Failed to delete message. It might have timed out.");
-            System.err.println("Error details: " + e.getMessage());
+            throw new RuntimeException("Failed to delete message: " + e.getMessage());
+            }
         }
-    }
+    
 
     private static File downloadFileFromURL(String url, String taskId, String destinationPath) {//NODE
         try{
             InputStream in = new URL(url).openStream();
             Files.copy(in, Paths.get(destinationPath + "/" + taskId + "_inputfile"), StandardCopyOption.REPLACE_EXISTING);
-        } catch (Exception e) {
-            e.printStackTrace();
+            return new File(destinationPath + "/" + taskId + "_inputfile");
+
+        } 
+        catch (Exception e) {
+            erorrMessage="Failed to download file from URL: " + e.getMessage();
+            System.err.println(erorrMessage);
+            return null;
         }
-        return new File(destinationPath + "/" + taskId + "_inputfile");
     }
 }
