@@ -2,26 +2,24 @@ package dsp1.ManagerApplication;
 
 import dsp1.AWS;
 
-import java.io.File;
+import java.net.URLEncoder;
+
 import software.amazon.awssdk.services.ec2.model.Filter;
+
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.List;
 
-import javax.json.Json;
-
 import java.util.ArrayList;
 import java.util.HashMap;
 
-import org.apache.lucene.index.Term;
 import org.json.JSONObject;
 
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.ec2.model.DescribeInstancesRequest;
 import software.amazon.awssdk.services.ec2.model.DescribeInstancesResponse;
-import software.amazon.awssdk.services.ec2.model.Ec2Exception;
 import software.amazon.awssdk.services.ec2.model.Instance;
-import software.amazon.awssdk.services.ec2.model.InstanceStateName;
 import software.amazon.awssdk.services.ec2.model.Reservation;
 import software.amazon.awssdk.services.ec2.model.TerminateInstancesRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
@@ -30,7 +28,7 @@ import software.amazon.awssdk.services.sqs.model.*;
 
 public class ManagerApplication {
 
-    private static HashMap<String, List<String>> jobIdToResults = new HashMap<>();
+    private static HashMap<String, List<String[]>> jobIdToResults = new HashMap<>();//[Analyzation type, Initial URL, Analyzed URL]
     private static HashMap<String , Integer> jobIdToExpectedTasks = new HashMap<>();
 
     private static final String LOCAL_TO_MANAGER = "LocalToManagerQueue";
@@ -363,64 +361,97 @@ public class ManagerApplication {
     }
 
         private static void handleDoneMessage(Message msg) {
-        JSONObject obj = new JSONObject(msg.body());
-        String taskId = obj.getString("taskId");
-        String resultLocation = obj.getString("result");
-        jobIdToResults.get(taskId).add(resultLocation);
-        if (jobIdToResults.get(taskId).size() == jobIdToExpectedTasks.get(taskId)) {
-            System.out.println("All tasks for job " + taskId + " are done. Creating summary...");
+            JSONObject obj = new JSONObject(msg.body());
+            String taskId = obj.getString("taskId");
+            String resultLocation = obj.getString("result");
+            String url = obj.getString("url");
+            String analysis = obj.getString("analysis");
+            String[] subTask = {analysis, url, resultLocation};
+            jobIdToResults.get(taskId).add(subTask);
+            if (jobIdToResults.get(taskId).size() == jobIdToExpectedTasks.get(taskId)) {
+                System.out.println("All tasks for job " + taskId + " are done. Creating summary...");
 
-            List<String> results = jobIdToResults.get(taskId);
-            String summaryKey = "results/" + taskId + "_summary.html";
+                List<String[]> results = jobIdToResults.get(taskId);
+                String summaryKey = "results/" + taskId + "_summary.html";
 
-            makeSummaryFile(taskId, results, summaryKey);
-            System.out.println("Summary file created: " );
-            JSONObject resultMsg = new JSONObject();
-            resultMsg.put("type", "jobDone");
-            resultMsg.put("taskId", taskId);
-            resultMsg.put("s3Bucket", AWSinstance.bucketName);     
-            resultMsg.put("outputS3Key", summaryKey);            
+                makeSummaryFile(taskId, results, summaryKey);
+                System.out.println("Summary file created: " );
+                JSONObject resultMsg = new JSONObject();
+                resultMsg.put("type", "jobDone");
+                resultMsg.put("taskId", taskId);
+                resultMsg.put("s3Bucket", AWSinstance.bucketName);     
+                resultMsg.put("outputS3Key", summaryKey);            
 
-            sendMessageToLocal(resultMsg.toString());
-            System.out.println("Sent jobDone to LocalApp.");
+                sendMessageToLocal(resultMsg.toString());
+                System.out.println("Sent jobDone to LocalApp.");
 
-            jobIdToResults.remove(taskId);
-            jobIdToExpectedTasks.remove(taskId);
-            jobsCompleted++;
-        }
+                jobIdToResults.remove(taskId);
+                jobIdToExpectedTasks.remove(taskId);
+                jobsCompleted++;
+            }
 
     } 
 
 
-    public static void makeSummaryFile(String taskId, List<String> resultKeys, String summaryKey) {
+    public static void makeSummaryFile(String taskId, List<String[]> resultKeys, String summaryKey) {
+        // --- Setup HTML ---
         StringBuilder html = new StringBuilder();
         html.append("<html><head><title>Results for ").append(taskId).append("</title></head><body>");
         html.append("<h1>Analysis Summary for Task: ").append(taskId).append("</h1>");
-        html.append("<hr>");
+        html.append("<table border='1'><tr><th>Analysis Type</th><th>Input File Link</th><th>Output File Link</th></tr>");
+        
+        // --- Loop through all worker results ---
+        for (String[] result : resultKeys) {
+            // Unpack the structure: [analysis type, input URL, output S3 Key]
+            String analysisType = result[0];
+            String inputUrl = result[1];
+            String outputS3Key = result[2];
 
-        for (String key : resultKeys) {
-            try {
-                GetObjectRequest getObjectRequest = GetObjectRequest.builder()
-                    .bucket(AWSinstance.bucketName)
-                    .key(key)
-                    .build();
+            // Default content is either the S3 link or the error message
+            String outputLinkContent;
+            String outputLinkHref;
+            
+            // Start the HTML row for this task
+            html.append("<tr>");
+            
+            // 1. ANALYSIS TYPE (First Column)
+            html.append("<td>").append(analysisType).append("</td>");
 
-                String content = AWSinstance.getS3().getObjectAsBytes(getObjectRequest).asUtf8String();
+            // 2. INPUT LINK (Second Column)
+            // Note: For simplicity, assuming inputUrl is the final URL (like the Gutenberg link)
+            html.append("<td><a href='").append(inputUrl).append("'>").append("Input Source").append("</a></td>");
 
-                html.append("<div style='border:1px solid #ccc; margin:10px; padding:10px;'>");
-                html.append(content.replace("\n", "<br>")); // 
-                html.append("</div>");
-
+            // 3. OUTPUT LINK OR ERROR (Third Column)
+            try {                                
+                // Build the public link to the aggregated output file
+                String publicLink = String.format("https://%s.s3.us-east-1.amazonaws.com/%s", 
+                                                    AWSinstance.bucketName,
+                                                    URLEncoder.encode(outputS3Key, StandardCharsets.UTF_8.toString()));
+                
+                outputLinkHref = publicLink;
+                outputLinkContent = "View Output";
+                
+                
+                // Success row creation
+                html.append("<td><a href='").append(outputLinkHref).append("' target='_blank'>").append(outputLinkContent).append("</a></td>");
+                
             } catch (Exception e) {
-                html.append("<p style='color:red;'>Failed to retrieve part: ").append(key).append("</p>");
+                // Failure row creation
+                String errorMessage = e.getMessage().replace("\n", " ").trim();
+                outputLinkContent = "ERROR: " + errorMessage;
+                
+                html.append("<td style='color:red;'>").append(outputLinkContent).append("</td>");
             }
-        }
-        html.append("</body></html>");
+            
+            html.append("</tr>");
+        } // End of loop
+
+        // --- Final Upload ---
+        html.append("</table></body></html>");
 
         uploadFileToS3(AWSinstance.bucketName, summaryKey, html.toString());
         System.out.println("Summary file uploaded to: " + summaryKey);
     }
-
    //------------------------------Terminate System---------------------------------
     private static void terminate(){
         System.out.println("Terminating system...");

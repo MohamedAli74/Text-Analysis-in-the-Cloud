@@ -2,7 +2,6 @@ package dsp1.WorkerApplication;
 import java.io.File;
 
 import dsp1.AWS;
-import edu.stanford.nlp.io.EncodingPrintWriter.err;
 
 import org.json.JSONObject;
 
@@ -75,7 +74,6 @@ public class WorkerApplication {
                 }
                 else {
                     System.out.println("Analysis complete for task" );   
-                    String buckename = "dsp-assignment1-12025111913";//NOTE
                     System.out.println("starting upload to s3...");
                     String keyName =  "results/" + currentTaskId + "_output.txt_" + url.replace('/','-')+ "_" + analysis;
                     uploadFileToS3(resultFile, keyName);
@@ -85,6 +83,7 @@ public class WorkerApplication {
                     .put("type", "jobDone")
                     .put("result", keyName)
                     .put("url", url)
+                    .put("analysis", analysis)
                     .toString()
                     );
                 }

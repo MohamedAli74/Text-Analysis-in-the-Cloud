@@ -1,9 +1,7 @@
 package dsp1.LocalApplication;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.ec2.Ec2Client;
-import software.amazon.awssdk.services.ec2.endpoints.internal.Value.Str;
 import software.amazon.awssdk.services.s3.S3Client;
-import software.amazon.awssdk.services.sqs.SqsClient;
 import software.amazon.awssdk.services.ec2.model.*;
 import software.amazon.awssdk.core.sync.RequestBody; 
 import software.amazon.awssdk.services.s3.model.S3Exception;
@@ -18,9 +16,7 @@ import software.amazon.awssdk.services.sqs.model.ReceiveMessageResponse;
 import org.json.JSONObject;
 
 import dsp1.AWS;
-import java.util.Map;
 import java.util.UUID;
-import java.nio.file.Paths;
 import java.io.File;
 
 import java.util.ArrayList;
@@ -28,7 +24,6 @@ import java.util.Base64;
 import java.util.List;
 
 
-import java.io.File; 
 import java.net.URL;
 
 import software.amazon.awssdk.services.s3.model.HeadBucketRequest;
