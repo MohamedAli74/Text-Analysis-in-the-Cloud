@@ -370,12 +370,10 @@ public class ManagerApplication {
             jobIdToResults.get(taskId).add(subTask);
             if (jobIdToResults.get(taskId).size() == jobIdToExpectedTasks.get(taskId)) {
                 System.out.println("All tasks for job " + taskId + " are done. Creating summary...");
-
                 List<String[]> results = jobIdToResults.get(taskId);
                 String summaryKey = "results/" + taskId + "_summary.html";
-
                 makeSummaryFile(taskId, results, summaryKey);
-                System.out.println("Summary file created: " );
+                System.out.println("Summary file created ");
                 JSONObject resultMsg = new JSONObject();
                 resultMsg.put("type", "jobDone");
                 resultMsg.put("taskId", taskId);
@@ -392,66 +390,101 @@ public class ManagerApplication {
 
     } 
 
+       private static void handlefailedjobMessage(Message msg) {
+    JSONObject obj = new JSONObject(msg.body());
+    String taskId = obj.getString("taskId");
+    String error = obj.getString("error");
+    String url = obj.getString("url");
+    String analysis = obj.getString("analysis");
 
-    public static void makeSummaryFile(String taskId, List<String[]> resultKeys, String summaryKey) {
-        // --- Setup HTML ---
-        StringBuilder html = new StringBuilder();
-        html.append("<html><head><title>Results for ").append(taskId).append("</title></head><body>");
-        html.append("<h1>Analysis Summary for Task: ").append(taskId).append("</h1>");
-        html.append("<table border='1'><tr><th>Analysis Type</th><th>Input File Link</th><th>Output File Link</th></tr>");
-        
-        // --- Loop through all worker results ---
-        for (String[] result : resultKeys) {
-            // Unpack the structure: [analysis type, input URL, output S3 Key]
-            String analysisType = result[0];
-            String inputUrl = result[1];
-            String outputS3Key = result[2];
+    System.out.println("Worker reported failed job for task " + taskId
+        + " | analysis=" + analysis
+        + " | url=" + url
+        + " | error=" + error);
 
-            // Default content is either the S3 link or the error message
-            String outputLinkContent;
-            String outputLinkHref;
-            
-            // Start the HTML row for this task
-            html.append("<tr>");
-            
-            // 1. ANALYSIS TYPE (First Column)
-            html.append("<td>").append(analysisType).append("</td>");
+    String[] subTask = { analysis, url, "ERROR: " + error };
+    jobIdToResults.get(taskId).add(subTask);
 
-            // 2. INPUT LINK (Second Column)
-            // Note: For simplicity, assuming inputUrl is the final URL (like the Gutenberg link)
-            html.append("<td><a href='").append(inputUrl).append("'>").append("Input Source").append("</a></td>");
+    if (jobIdToResults.get(taskId).size() == jobIdToExpectedTasks.get(taskId)) {
+        System.out.println("All tasks for job " + taskId + " are done. Creating summary...");
+        List<String[]> results = jobIdToResults.get(taskId);
+        String summaryKey = "results/" + taskId + "_summary.html";
+        makeSummaryFile(taskId, results, summaryKey);
+        System.out.println("Summary file created ");
+        JSONObject resultMsg = new JSONObject();
+        resultMsg.put("type", "jobDone");
+        resultMsg.put("taskId", taskId);
+        resultMsg.put("s3Bucket", AWSinstance.bucketName);     
+        resultMsg.put("outputS3Key", summaryKey);            
 
-            // 3. OUTPUT LINK OR ERROR (Third Column)
-            try {                                
-                // Build the public link to the aggregated output file
-                String publicLink = String.format("https://%s.s3.us-east-1.amazonaws.com/%s", 
-                                                    AWSinstance.bucketName,
-                                                    URLEncoder.encode(outputS3Key, StandardCharsets.UTF_8.toString()));
-                
-                outputLinkHref = publicLink;
-                outputLinkContent = "View Output";
-                
-                
-                // Success row creation
-                html.append("<td><a href='").append(outputLinkHref).append("' target='_blank'>").append(outputLinkContent).append("</a></td>");
-                
-            } catch (Exception e) {
-                // Failure row creation
-                String errorMessage = e.getMessage().replace("\n", " ").trim();
-                outputLinkContent = "ERROR: " + errorMessage;
-                
-                html.append("<td style='color:red;'>").append(outputLinkContent).append("</td>");
-            }
-            
-            html.append("</tr>");
-        } // End of loop
+        sendMessageToLocal(resultMsg.toString());
+        System.out.println("Sent jobDone to LocalApp.");
 
-        // --- Final Upload ---
-        html.append("</table></body></html>");
-
-        uploadFileToS3(AWSinstance.bucketName, summaryKey, html.toString());
-        System.out.println("Summary file uploaded to: " + summaryKey);
+        jobIdToResults.remove(taskId);
+        jobIdToExpectedTasks.remove(taskId);
+        jobsCompleted++;
     }
+}
+
+   
+        public static void makeSummaryFile(String taskId, List<String[]> resultKeys, String summaryKey) {
+    StringBuilder html = new StringBuilder();
+
+    html.append("<html><head><title>Results for ")
+        .append(taskId)
+        .append("</title></head><body>");
+
+    html.append("<h1>Analysis Results</h1>");
+
+    for (String[] result : resultKeys) {
+        String analysisType = result[0];
+        String inputUrl     = result[1];
+        String outputField  = result[2];  
+
+        html.append("<p>");
+
+        html.append(analysisType).append(": ");
+
+        html.append("<a href='")
+            .append(inputUrl)
+            .append("'>")
+            .append(inputUrl)
+            .append("</a> ");
+
+        // 3) output:
+        if (outputField != null && outputField.startsWith("ERROR:")) {
+            html.append(outputField);   
+        } else {
+            try {
+                String encodedKey = URLEncoder.encode(
+                        outputField,
+                        StandardCharsets.UTF_8.toString()
+                );
+
+                String publicLink = "https://" + AWSinstance.bucketName
+                        + ".s3.us-east-1.amazonaws.com/" + encodedKey;
+
+                html.append("<a href='")
+                    .append(publicLink)
+                    .append("'>")
+                    .append(publicLink)
+                    .append("</a>");
+
+            } catch (Exception e) {
+                html.append("ERROR: ").append(e.getMessage());
+            }
+        }
+
+        html.append("</p>\n");
+    }
+
+    html.append("</body></html>");
+
+    uploadFileToS3(AWSinstance.bucketName, summaryKey, html.toString());
+    System.out.println("Summary file uploaded to: " + summaryKey);
+}
+
+
    //------------------------------Terminate System---------------------------------
     private static void terminate(){
         System.out.println("Terminating system...");
@@ -477,16 +510,7 @@ public class ManagerApplication {
         }
     }
 
-    private static void handlefailedjobMessage(Message msg) {
-        JSONObject obj = new JSONObject(msg.body());
-        String taskId = obj.getString("taskId");
-        String error = obj.getString("error");
-        System.out.println("Worker reported failed job for task " + taskId + ": " + error);
-       //todoo
-
-
-    
-    }
+   
 
     // ----------------------------Main---------------------------------    
 

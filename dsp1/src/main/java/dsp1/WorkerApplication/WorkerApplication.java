@@ -55,7 +55,8 @@ public class WorkerApplication {
                         .put("taskId", currentTaskId)
                         .put("type", "failedjob")
                         .put("error", erorrMessage)
-                        .put(analysis, msg)
+                        .put("url", url)
+                        .put("analysis", analysis)
                         .toString()
                         );
                     continue;
@@ -67,7 +68,8 @@ public class WorkerApplication {
                         .put("taskId", currentTaskId)
                         .put("type", "failedjob")
                         .put("error", erorrMessage)
-                        .put(analysis, msg)
+                        .put("url", url)
+                        .put("analysis", analysis)
                         .toString()
                         );
                     continue;
