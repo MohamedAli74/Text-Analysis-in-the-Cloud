@@ -320,6 +320,7 @@ public class ManagerApplication {
             JSONObject failObject = new JSONObject();
             failObject.put("type", "blocked");
             failObject.put("description", "Unable to recieve task %s\nManager will be terminating soon...".formatted(taskid));
+            failObject.put("taskId",taskid);
             sendMessageToLocal(failObject.toString());
             deleteMessage(LocalManagerQueueURL, msg);
             return;
