@@ -8,6 +8,7 @@ import software.amazon.awssdk.services.s3.model.S3Exception;
 import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
 import software.amazon.awssdk.services.s3.model.NoSuchBucketException;
 import software.amazon.awssdk.services.sqs.model.SendMessageRequest;
+import software.amazon.awssdk.services.sqs.model.ChangeMessageVisibilityRequest;
 import software.amazon.awssdk.services.sqs.model.DeleteMessageRequest;
 import software.amazon.awssdk.services.sqs.model.GetQueueUrlRequest;
 import software.amazon.awssdk.services.sqs.model.Message;
@@ -320,14 +321,28 @@ public class LocalApplication{
                 String body = msg.body();
                 JSONObject obj = new JSONObject(body);    
                 String taskId = obj.getString("taskId");
-                if(!taskId.equals(mytaskid))continue;
-                
+                if(!taskId.equals(mytaskid)){
+                    try {
+                        ChangeMessageVisibilityRequest request = ChangeMessageVisibilityRequest.builder()
+                            .queueUrl(ManagerLocalQueueURL)
+                            .receiptHandle(msg.receiptHandle())
+                            .visibilityTimeout(0) // Reset visibility timeout to 0 seconds
+                            .build();
+            
+                        AWSinstance.getSqs().changeMessageVisibility(request);
+        
+                    } catch (Exception e) {
+                        System.err.println("Failed to return message to queue: " + e.getMessage());
+                    }
+                    continue;
+                }
+
                 System.out.println("Received message from Manager: " + body);
                 String type = obj.getString("type");
                 if(type.equals("blocked")){
                     System.out.println(obj.getString("description"));
                     deleteMessage(ManagerLocalQueueURL, msg);
-                    continue;
+                    System.exit(0);
                 }
                 String outputS3Key = obj.getString("outputS3Key");
                 String bucketName = obj.getString("s3Bucket");
