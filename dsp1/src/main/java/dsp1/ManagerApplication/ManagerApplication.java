@@ -10,9 +10,12 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.List;
-
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.Collections;
 
 import org.json.JSONObject;
 
@@ -28,8 +31,11 @@ import software.amazon.awssdk.services.sqs.model.*;
 
 public class ManagerApplication {
 
-    private static HashMap<String, List<String[]>> jobIdToResults = new HashMap<>();//[Analyzation type, Initial URL, Analyzed URL]
-    private static HashMap<String , Integer> jobIdToExpectedTasks = new HashMap<>();
+    private static final int MANAGER_THREAD_POOL_SIZE = 5; 
+    private static ExecutorService requestThreadPool;
+
+    private static ConcurrentHashMap<String, List<String[]>> jobIdToResults = new ConcurrentHashMap<>();//[Analyzation type, Initial URL, Analyzed URL]
+    private static ConcurrentHashMap<String , Integer> jobIdToExpectedTasks = new ConcurrentHashMap<>();
 
     private static final String LOCAL_TO_MANAGER = "LocalToManagerQueue";
     private static String LocalManagerQueueURL;
@@ -44,8 +50,8 @@ public class ManagerApplication {
     private static final AWS AWSinstance = AWS.getInstance();
     private static boolean toTerminate = false;
 
-    private static int jobsReceived = 0;
-    private static int jobsCompleted = 0;
+    private static AtomicInteger jobsReceived = new AtomicInteger(0);
+    private static AtomicInteger jobsCompleted = new AtomicInteger(0);
 
 
     // -------------------------------------------------------------
@@ -332,7 +338,7 @@ public class ManagerApplication {
 
 
         // 0. add to task status map
-        jobIdToResults.put(taskid, new ArrayList<>());
+        jobIdToResults.put(taskid, Collections.synchronizedList(new ArrayList<>()));
         System.out.println("Downloaded input file1  ");
 
         // 1. Download file
@@ -350,7 +356,7 @@ public class ManagerApplication {
 
         // 4. Distribute tasks to workers
         sendTasksToWorkers(tasks);
-        jobsReceived++;
+        jobsReceived.incrementAndGet();
     }
 
 
@@ -385,104 +391,104 @@ public class ManagerApplication {
 
                 jobIdToResults.remove(taskId);
                 jobIdToExpectedTasks.remove(taskId);
-                jobsCompleted++;
+                jobsCompleted.incrementAndGet();
             }
 
     } 
 
-       private static void handlefailedjobMessage(Message msg) {
-    JSONObject obj = new JSONObject(msg.body());
-    String taskId = obj.getString("taskId");
-    String error = obj.getString("error");
-    String url = obj.getString("url");
-    String analysis = obj.getString("analysis");
+    private static void handlefailedjobMessage(Message msg) {
+        JSONObject obj = new JSONObject(msg.body());
+        String taskId = obj.getString("taskId");
+        String error = obj.getString("error");
+        String url = obj.getString("url");
+        String analysis = obj.getString("analysis");
 
-    System.out.println("Worker reported failed job for task " + taskId
-        + " | analysis=" + analysis
-        + " | url=" + url
-        + " | error=" + error);
+        System.out.println("Worker reported failed job for task " + taskId
+            + " | analysis=" + analysis
+            + " | url=" + url
+            + " | error=" + error);
 
-    String[] subTask = { analysis, url, "ERROR: " + error };
-    jobIdToResults.get(taskId).add(subTask);
+        String[] subTask = { analysis, url, "ERROR: " + error };
+        jobIdToResults.get(taskId).add(subTask);
 
-    if (jobIdToResults.get(taskId).size() == jobIdToExpectedTasks.get(taskId)) {
-        System.out.println("All tasks for job " + taskId + " are done. Creating summary...");
-        List<String[]> results = jobIdToResults.get(taskId);
-        String summaryKey = "results/" + taskId + "_summary.html";
-        makeSummaryFile(taskId, results, summaryKey);
-        System.out.println("Summary file created ");
-        JSONObject resultMsg = new JSONObject();
-        resultMsg.put("type", "jobDone");
-        resultMsg.put("taskId", taskId);
-        resultMsg.put("s3Bucket", AWSinstance.bucketName);     
-        resultMsg.put("outputS3Key", summaryKey);            
+        if (jobIdToResults.get(taskId).size() == jobIdToExpectedTasks.get(taskId)) {
+            System.out.println("All tasks for job " + taskId + " are done. Creating summary...");
+            List<String[]> results = jobIdToResults.get(taskId);
+            String summaryKey = "results/" + taskId + "_summary.html";
+            makeSummaryFile(taskId, results, summaryKey);
+            System.out.println("Summary file created ");
+            JSONObject resultMsg = new JSONObject();
+            resultMsg.put("type", "jobDone");
+            resultMsg.put("taskId", taskId);
+            resultMsg.put("s3Bucket", AWSinstance.bucketName);     
+            resultMsg.put("outputS3Key", summaryKey);            
 
-        sendMessageToLocal(resultMsg.toString());
-        System.out.println("Sent jobDone to LocalApp.");
+            sendMessageToLocal(resultMsg.toString());
+            System.out.println("Sent jobDone to LocalApp.");
 
-        jobIdToResults.remove(taskId);
-        jobIdToExpectedTasks.remove(taskId);
-        jobsCompleted++;
-    }
+            jobIdToResults.remove(taskId);
+            jobIdToExpectedTasks.remove(taskId);
+            jobsCompleted.incrementAndGet();
+        }
 }
 
    
-        public static void makeSummaryFile(String taskId, List<String[]> resultKeys, String summaryKey) {
-    StringBuilder html = new StringBuilder();
+    public static void makeSummaryFile(String taskId, List<String[]> resultKeys, String summaryKey) {
+        StringBuilder html = new StringBuilder();
 
-    html.append("<html><head><title>Results for ")
-        .append(taskId)
-        .append("</title></head><body>");
+        html.append("<html><head><title>Results for ")
+            .append(taskId)
+            .append("</title></head><body>");
 
-    html.append("<h1>Analysis Results</h1>");
+        html.append("<h1>Analysis Results</h1>");
 
-    for (String[] result : resultKeys) {
-        String analysisType = result[0];
-        String inputUrl     = result[1];
-        String outputField  = result[2];  
+        for (String[] result : resultKeys) {
+            String analysisType = result[0];
+            String inputUrl     = result[1];
+            String outputField  = result[2];  
 
-        html.append("<p>");
+            html.append("<p>");
 
-        html.append(analysisType).append(": ");
+            html.append(analysisType).append(": ");
 
-        html.append("<a href='")
-            .append(inputUrl)
-            .append("'>")
-            .append(inputUrl)
-            .append("</a> ");
+            html.append("<a href='")
+                .append(inputUrl)
+                .append("'>")
+                .append(inputUrl)
+                .append("</a> ");
 
-        // 3) output:
-        if (outputField != null && outputField.startsWith("ERROR:")) {
-            html.append(outputField);   
-        } else {
-            try {
-                String encodedKey = URLEncoder.encode(
-                        outputField,
-                        StandardCharsets.UTF_8.toString()
-                );
+            // 3) output:
+            if (outputField != null && outputField.startsWith("ERROR:")) {
+                html.append(outputField);   
+            } else {
+                try {
+                    String encodedKey = URLEncoder.encode(
+                            outputField,
+                            StandardCharsets.UTF_8.toString()
+                    );
 
-                String publicLink = "https://" + AWSinstance.bucketName
-                        + ".s3.us-east-1.amazonaws.com/" + encodedKey;
+                    String publicLink = "https://" + AWSinstance.bucketName
+                            + ".s3.us-east-1.amazonaws.com/" + encodedKey;
 
-                html.append("<a href='")
-                    .append(publicLink)
-                    .append("'>")
-                    .append(publicLink)
-                    .append("</a>");
+                    html.append("<a href='")
+                        .append(publicLink)
+                        .append("'>")
+                        .append(publicLink)
+                        .append("</a>");
 
-            } catch (Exception e) {
-                html.append("ERROR: ").append(e.getMessage());
+                } catch (Exception e) {
+                    html.append("ERROR: ").append(e.getMessage());
+                }
             }
+
+            html.append("</p>\n");
         }
 
-        html.append("</p>\n");
+        html.append("</body></html>");
+
+        uploadFileToS3(AWSinstance.bucketName, summaryKey, html.toString());
+        System.out.println("Summary file uploaded to: " + summaryKey);
     }
-
-    html.append("</body></html>");
-
-    uploadFileToS3(AWSinstance.bucketName, summaryKey, html.toString());
-    System.out.println("Summary file uploaded to: " + summaryKey);
-}
 
 
    //------------------------------Terminate System---------------------------------
@@ -516,6 +522,8 @@ public class ManagerApplication {
 
     public static void main(String[] args) {
 
+        requestThreadPool = Executors.newFixedThreadPool(MANAGER_THREAD_POOL_SIZE);
+
         createQueue(LOCAL_TO_MANAGER);
         LocalManagerQueueURL = getQueueUrl(LOCAL_TO_MANAGER);
 
@@ -530,12 +538,38 @@ public class ManagerApplication {
 
         System.out.println("Manager started. Waiting for messages...");
 
+
+
         while (true) {
 
             // 2) Receive message from LocalApps
             Message msgFromLocal = receiveMessage(LocalManagerQueueURL);
             if (msgFromLocal != null){
-                try {
+               requestThreadPool.submit(() ->handleIncomingLocal(msgFromLocal));
+            }
+            
+            //----------------------------------------------------------
+            
+            Message msgFromWorker = receiveMessage(WorkersManagerQueueURL);
+            if (msgFromWorker != null){
+                requestThreadPool.submit(() ->handleIncomingWorker(msgFromWorker));
+            }
+
+            if (jobsReceived.get() == jobsCompleted.get() && jobsReceived.get() > 0) {
+                System.out.println("All jobs completed.");
+                if(toTerminate){
+                    terminate();
+                }
+                else{
+                    jobsReceived = new AtomicInteger(0);
+                    jobsCompleted = new AtomicInteger(0);
+                }
+            }
+        }
+    }
+
+    private static void handleIncomingLocal(Message msgFromLocal){
+         try {
                     JSONObject obj = new JSONObject(msgFromLocal.body());
                     String type = obj.getString("type");
                     System.out.println(msgFromLocal.body());
@@ -553,37 +587,21 @@ public class ManagerApplication {
                     // This catches SQS API errors, JSON parsing errors, and logic errors.
                     System.err.println("ERROR: Failed to process or delete message: " + e.getMessage());
                 }          
-            }
-            
-            //----------------------------------------------------------
+    }
 
-            Message msgFromWorker = receiveMessage(WorkersManagerQueueURL);
-            if (msgFromWorker != null){
-                System.out.println("received message from worker: " + msgFromWorker.body());
-                JSONObject obj = new JSONObject(msgFromWorker.body());
-                String type = obj.getString("type");
-                if (type.equals("jobDone")) {
-                    deleteMessage(WORKERS_TO_MANAGER, msgFromWorker);
-                    handleDoneMessage(msgFromWorker);
-                }
-
-                 if (type.equals("failedjob")) {
-                    deleteMessage(WORKERS_TO_MANAGER, msgFromWorker);
-                    handlefailedjobMessage(msgFromWorker);
-                }
-                
-            }
-
-            if (jobsReceived == jobsCompleted && jobsReceived > 0) {
-                System.out.println("All jobs completed.");
-                if(toTerminate){
-                    terminate();
-                }
-                else{
-                    jobsReceived = 0;
-                    jobsCompleted = 0;
-                }
-            }
+    private static void handleIncomingWorker(Message msgFromWorker){
+        System.out.println("received message from worker: " + msgFromWorker.body());
+        JSONObject obj = new JSONObject(msgFromWorker.body());
+        String type = obj.getString("type");
+        if (type.equals("jobDone")) {
+            deleteMessage(WORKERS_TO_MANAGER, msgFromWorker);
+            handleDoneMessage(msgFromWorker);
         }
+
+            if (type.equals("failedjob")) {
+            deleteMessage(WORKERS_TO_MANAGER, msgFromWorker);
+            handlefailedjobMessage(msgFromWorker);
+        }
+        
     }
 }
