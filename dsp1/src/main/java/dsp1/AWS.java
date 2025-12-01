@@ -43,7 +43,7 @@ public class AWS {
         return instance;
     }
 
-    public String bucketName = "dsp-assignment1-12025111913";
+    public String bucketName = "ami-0c02fb55956c7d316";
 
     // S3
     public void createBucketIfNotExists(String bucketName) {

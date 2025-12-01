@@ -7,6 +7,7 @@ import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
 import software.amazon.awssdk.services.s3.model.NoSuchBucketException;
+import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.sqs.model.SendMessageRequest;
 import software.amazon.awssdk.services.sqs.model.ChangeMessageVisibilityRequest;
 import software.amazon.awssdk.services.sqs.model.DeleteMessageRequest;
@@ -28,6 +29,7 @@ import java.util.List;
 import java.net.URL;
 
 import software.amazon.awssdk.services.s3.model.HeadBucketRequest;
+import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
 public class LocalApplication{
@@ -161,36 +163,42 @@ public class LocalApplication{
     //////////////////////////////////////////AWS S3 Methods//////////////////////////////////////
 
     public static void uploadManagerJar(String bucketName) {
-        System.out.println("Uploading Manager JAR to S3...");
+        try{
+            HeadObjectRequest headObjectRequest = HeadObjectRequest.builder().key("system.jar").bucket(bucketName).build();
+            AWSinstance.getS3().headObject(headObjectRequest);
+        }catch(NoSuchKeyException ex){
+            System.out.println("Uploading Manager JAR to S3...");
 
-        String localJarPath = "target/dsp1-1.0-SNAPSHOT.jar"; 
-        File jarFile = new File(localJarPath);
+            String localJarPath = "target/dsp1-1.0-SNAPSHOT.jar"; 
+            File jarFile = new File(localJarPath);
 
-        // 2. Verify the JAR exists
-        if (!jarFile.exists()) {
-            System.err.println("ERROR: JAR file not found at: " + jarFile.getAbsolutePath());
-            System.err.println("run 'mvn clean package' first");
-            System.exit(1); // Stop execution because Manager cannot run without code
-        }
+            // 2. Verify the JAR exists
+            if (!jarFile.exists()) {
+                System.err.println("ERROR: JAR file not found at: " + jarFile.getAbsolutePath());
+                System.err.println("run 'mvn clean package' first");
+                System.exit(1); // Stop execution because Manager cannot run without code
+            }
 
-        String s3Key = "system.jar";
+            String s3Key = "system.jar";
 
-        // 4. Upload
-        try {
-            PutObjectRequest putOb = PutObjectRequest.builder()
-                        .bucket(bucketName)
-                        .key(s3Key)
-                        .build();
+            // 4. Upload
+            try {
+                PutObjectRequest putOb = PutObjectRequest.builder()
+                            .bucket(bucketName)
+                            .key(s3Key)
+                            .build();
 
-            s3.putObject(putOb, RequestBody.fromFile(jarFile));
+                s3.putObject(putOb, RequestBody.fromFile(jarFile));
 
-            System.out.println("Manager JAR uploaded successfully to: s3://" + bucketName + "/" + s3Key);
+                System.out.println("Manager JAR uploaded successfully to: s3://" + bucketName + "/" + s3Key);
 
-        } catch (Exception e) {
-            System.err.println("Failed to upload JAR: " + e.getMessage());
-            throw new RuntimeException(e);
+            } catch (Exception e) {
+                System.err.println("Failed to upload JAR: " + e.getMessage());
+                throw new RuntimeException(e);
+            }
         }
     }
+
 
     public static File getFileFromResources(String fileName) {
         URL resource = LocalApplication.class.getClassLoader().getResource(fileName);
@@ -300,9 +308,9 @@ public class LocalApplication{
             terminate = args[3].equals("terminate");
         }
         //assure that the S3 buckcet exists
-        //CheckPucketExistence();
+        CheckPucketExistence();
         //assure that a manager node exists
-        String managerId = getOrCreateManagerInstance();
+        getOrCreateManagerInstance();
         ManagerLocalQueueURL = getQueueUrl(ManagerLocalQueueName);
         LocalManagerQueueURL = getQueueUrl(LocalManagerQueueName);
         //upload the input file to S3

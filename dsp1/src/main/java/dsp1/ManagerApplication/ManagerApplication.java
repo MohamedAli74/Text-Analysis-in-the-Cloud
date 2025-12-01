@@ -435,61 +435,58 @@ public class ManagerApplication {
 
    
     public static void makeSummaryFile(String taskId, List<String[]> resultKeys, String summaryKey) {
-        StringBuilder html = new StringBuilder();
+    StringBuilder html = new StringBuilder();
 
-        html.append("<html><head><title>Results for ")
-            .append(taskId)
-            .append("</title></head><body>");
+    html.append("<html><head><title>Results for ").append(taskId).append("</title>")
+        .append("<style>")
+        .append("body { font-family: Arial, sans-serif; margin: 25px; background-color: #f9f9f9; }")
+        .append("h1 { color: #333; border-bottom: 2px solid #007bff; padding-bottom: 10px; margin-bottom: 20px; }")
+        .append(".results-table { width: 100%; border-collapse: collapse; margin-top: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }")
+        .append(".results-table th, .results-table td { border: 1px solid #ddd; padding: 10px; text-align: left; }")
+        .append(".results-table th { background-color: #007bff; color: white; }")
+        .append(".error-cell { background-color: #fdd; color: #cc0000; font-weight: bold; }")
+        .append("</style></head><body>");
 
-        html.append("<h1>Analysis Results</h1>");
+    html.append("<h1>Analysis Results for Task: ").append(taskId).append("</h1>");
+    
+    html.append("<table class='results-table'>");
+    html.append("<tr><th>Analysis Type</th><th>Input File Link</th><th>Output File Link</th></tr>");
 
-        for (String[] result : resultKeys) {
-            String analysisType = result[0];
-            String inputUrl     = result[1];
-            String outputField  = result[2];  
+    for (String[] result : resultKeys) {
+        String analysisType = result[0];
+        String inputUrl     = result[1];
+        String outputField  = result[2];  
 
-            html.append("<p>");
+        html.append("<tr>");
+        
+        html.append("<td>").append(analysisType).append("</td>");
 
-            html.append(analysisType).append(": ");
+        html.append("<td><a href='").append(inputUrl).append("' target='_blank'>Source URL</a></td>");
 
-            html.append("<a href='")
-                .append(inputUrl)
-                .append("'>")
-                .append(inputUrl)
-                .append("</a> ");
-
-            // 3) output:
+        try { 
             if (outputField != null && outputField.startsWith("ERROR:")) {
-                html.append(outputField);   
+                html.append("<td class='error-cell'>").append(outputField).append("</td>");
             } else {
-                try {
-                    String encodedKey = URLEncoder.encode(
-                            outputField,
-                            StandardCharsets.UTF_8.toString()
-                    );
+                String encodedKey = URLEncoder.encode(outputField, StandardCharsets.UTF_8.toString());
+                
+                String publicLink = "https://" + AWSinstance.bucketName
+                        + ".s3.us-east-1.amazonaws.com/" + encodedKey;
 
-                    String publicLink = "https://" + AWSinstance.bucketName
-                            + ".s3.us-east-1.amazonaws.com/" + encodedKey;
-
-                    html.append("<a href='")
-                        .append(publicLink)
-                        .append("'>")
-                        .append(publicLink)
-                        .append("</a>");
-
-                } catch (Exception e) {
-                    html.append("ERROR: ").append(e.getMessage());
-                }
+                html.append("<td><a href='").append(publicLink).append("' target='_blank'>View Output</a></td>");
             }
-
-            html.append("</p>\n");
+        } catch (Exception e) {
+            html.append("<td class='error-cell'>UNEXPECTED ERROR: ").append(e.getMessage()).append("</td>");
         }
-
-        html.append("</body></html>");
-
-        uploadFileToS3(AWSinstance.bucketName, summaryKey, html.toString());
-        System.out.println("Summary file uploaded to: " + summaryKey);
+        
+        html.append("</tr>\n"); 
     }
+
+    html.append("</table>");
+    html.append("</body></html>");
+
+    uploadFileToS3(AWSinstance.bucketName, summaryKey, html.toString());
+    System.out.println("Summary file uploaded to: " + summaryKey);
+}
 
 
    //------------------------------Terminate System---------------------------------
