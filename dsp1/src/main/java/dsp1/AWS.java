@@ -17,7 +17,7 @@ public class AWS {
     private final SqsClient sqs;
     private final Ec2Client ec2;
 
-    public static String ami = "ami-00e95a9222311e8ed";
+    public static String ami = "ami-0c02fb55956c7d316";
 
     public static Region region1 = Region.US_WEST_2;
     public static Region region2 = Region.US_EAST_1;
@@ -43,7 +43,7 @@ public class AWS {
         return instance;
     }
 
-    public String bucketName = "ami-0c02fb55956c7d316";
+    public String bucketName = "dsp-assignment1-12025111913";
 
     // S3
     public void createBucketIfNotExists(String bucketName) {

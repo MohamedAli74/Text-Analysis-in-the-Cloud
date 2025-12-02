@@ -1,3 +1,3 @@
-DEPENDENCY	https://www.gutenberg.org/files/1659/1659-0.txt
-POS	https://www.gutenberg.org/files/1660/1660-0.txt
-CONSTITUENCY	https://www.gutenberg.org/files/1660/1660-0.txt
+CONSTITUENCY	https://gist.githubusercontent.com/teamedward/1d5af2ef15e8b079505d2f2e78c0e3b2/raw/short.txt
+POS	  https://example-files.online-convert.com/document/txt/example.txt
+CONSTITUENCY	https://txt2html.sourceforge.net/sample.txt 

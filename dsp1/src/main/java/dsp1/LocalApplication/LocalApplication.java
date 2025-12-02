@@ -329,7 +329,9 @@ public class LocalApplication{
                 String body = msg.body();
                 JSONObject obj = new JSONObject(body);    
                 String taskId = obj.getString("taskId");
+
                 if(!taskId.equals(mytaskid)){
+                    System.out.println("Recieved another local's message, returning the message...");
                     try {
                         ChangeMessageVisibilityRequest request = ChangeMessageVisibilityRequest.builder()
                             .queueUrl(ManagerLocalQueueURL)

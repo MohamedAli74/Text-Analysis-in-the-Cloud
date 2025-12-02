@@ -23,6 +23,7 @@ import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.ec2.model.DescribeInstancesRequest;
 import software.amazon.awssdk.services.ec2.model.DescribeInstancesResponse;
 import software.amazon.awssdk.services.ec2.model.Instance;
+import software.amazon.awssdk.services.ec2.model.InstanceStateName;
 import software.amazon.awssdk.services.ec2.model.Reservation;
 import software.amazon.awssdk.services.ec2.model.TerminateInstancesRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
@@ -31,7 +32,7 @@ import software.amazon.awssdk.services.sqs.model.*;
 
 public class ManagerApplication {
 
-    private static final int MANAGER_THREAD_POOL_SIZE = 5; 
+    private static final int MANAGER_THREAD_POOL_SIZE = 2; 
     private static ExecutorService requestThreadPool;
 
     private static ConcurrentHashMap<String, List<String[]>> jobIdToResults = new ConcurrentHashMap<>();//[Analyzation type, Initial URL, Analyzed URL]
@@ -248,7 +249,9 @@ public class ManagerApplication {
     
         for (Reservation reservation : response.reservations()) {
             for (Instance instance : reservation.instances()) {
+                if(instance.state().name() == InstanceStateName.RUNNING){
                 instanceIds.add(instance.instanceId());
+                }
             }
         }
     
@@ -273,7 +276,7 @@ public class ManagerApplication {
 
     //--------------------------------------- parse and distribute tasks to workers
     public static int AvailableWorker() {
-        int maxWorkers = 7;
+        int maxWorkers = 8;
         int runningWorkers = getRunningWorkersCount();
         return maxWorkers - runningWorkers;
     }
@@ -356,8 +359,8 @@ public class ManagerApplication {
         startWorkersIfNeeded(tasks, workersToFileRatio);
 
         // 4. Distribute tasks to workers
-        sendTasksToWorkers(tasks);
         jobsReceived.incrementAndGet();
+        sendTasksToWorkers(tasks);
     }
 
 
@@ -367,34 +370,38 @@ public class ManagerApplication {
         System.exit(0);
     }
 
-        private static void handleDoneMessage(Message msg) {
-            JSONObject obj = new JSONObject(msg.body());
-            String taskId = obj.getString("taskId");
-            String resultLocation = obj.getString("result");
-            String url = obj.getString("url");
-            String analysis = obj.getString("analysis");
-            String[] subTask = {analysis, url, resultLocation};
-            jobIdToResults.get(taskId).add(subTask);
-            if (jobIdToResults.get(taskId).size() == jobIdToExpectedTasks.get(taskId)) {
-                System.out.println("All tasks for job " + taskId + " are done. Creating summary...");
-                List<String[]> results = jobIdToResults.get(taskId);
-                String summaryKey = "results/" + taskId + "_summary.html";
-                makeSummaryFile(taskId, results, summaryKey);
-                System.out.println("Summary file created ");
-                JSONObject resultMsg = new JSONObject();
-                resultMsg.put("type", "jobDone");
-                resultMsg.put("taskId", taskId);
-                resultMsg.put("s3Bucket", AWSinstance.bucketName);     
-                resultMsg.put("outputS3Key", summaryKey);            
+    private static void handleDoneMessage(Message msg) {
+        JSONObject obj = new JSONObject(msg.body());
+        String taskId = obj.getString("taskId");
+        String resultLocation = obj.getString("result");
+        String url = obj.getString("url");
+        String analysis = obj.getString("analysis");
+        String[] subTask = {analysis, url, resultLocation};
+        List<String[]> tasksCompleted = jobIdToResults.get(taskId);
+        boolean done = false; 
+        for(String[] task : tasksCompleted)
+            if(task[0].equals(subTask[0]) && task[1].equals(subTask[1]))done = true;
+        if(!done)
+            tasksCompleted.add(subTask);
+        if (jobIdToResults.get(taskId).size() == jobIdToExpectedTasks.get(taskId)) {
+            System.out.println("All tasks for job " + taskId + " are done. Creating summary...");
+            List<String[]> results = jobIdToResults.get(taskId);
+            String summaryKey = "results/" + taskId + "_summary.html";
+            makeSummaryFile(taskId, results, summaryKey);
+            System.out.println("Summary file created ");
+            JSONObject resultMsg = new JSONObject();
+            resultMsg.put("type", "jobDone");
+            resultMsg.put("taskId", taskId);
+            resultMsg.put("s3Bucket", AWSinstance.bucketName);     
+            resultMsg.put("outputS3Key", summaryKey);            
 
-                sendMessageToLocal(resultMsg.toString());
-                System.out.println("Sent jobDone to LocalApp.");
+            sendMessageToLocal(resultMsg.toString());
+            System.out.println("Sent jobDone to LocalApp.");
 
-                jobIdToResults.remove(taskId);
-                jobIdToExpectedTasks.remove(taskId);
-                jobsCompleted.incrementAndGet();
-            }
-
+            jobIdToResults.remove(taskId);
+            jobIdToExpectedTasks.remove(taskId);
+            jobsCompleted.incrementAndGet();
+        }
     } 
 
     private static void handlefailedjobMessage(Message msg) {
@@ -554,7 +561,7 @@ public class ManagerApplication {
             }
 
             if (jobsReceived.get() == jobsCompleted.get() && jobsReceived.get() > 0) {
-                System.out.println("All jobs completed.");
+                System.out.println("All jobs completed. jobs completed:" + jobsCompleted + " out of " + jobsCompleted);
                 if(toTerminate){
                     terminate();
                 }

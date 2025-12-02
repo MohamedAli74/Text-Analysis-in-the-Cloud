@@ -25,6 +25,7 @@ public class WorkerApplication {
     private static final String ManagerWorkerQueueName = "ManagerToWorkersQueue";
     private static String ManagerWorkerQueueURL;
     private static String currentTaskId;
+    private static Message currentMessage;
 
     public static void main(String[] args) {
         ManagerWorkerQueueURL = AWSinstance.getSqs().getQueueUrl(GetQueueUrlRequest.builder()
@@ -38,6 +39,9 @@ public class WorkerApplication {
         while(true) { 
             System.out.println("Worker is waiting for tasks...");
             Message msg = receiveMessage(ManagerWorkerQueueURL);
+            currentMessage = msg;
+            deleteMessage(ManagerWorkerQueueURL, msg);    
+
             if (msg != null) {
                 System.out.println("Worker received a task message.");
                 System.out.println("Message body: " + msg.body());
@@ -79,7 +83,6 @@ public class WorkerApplication {
                     System.out.println("starting upload to s3...");
                     String keyName =  "results/" + currentTaskId + "_output.txt_" + url.replace('/','-')+ "_" + analysis;
                     uploadFileToS3(resultFile, keyName);
-                    deleteMessage(ManagerWorkerQueueURL, msg);    
                     sendMessageToManager(new JSONObject()
                     .put("taskId", currentTaskId)
                     .put("type", "jobDone")
@@ -133,11 +136,19 @@ public class WorkerApplication {
                 file.toPath()
                 );
         } catch (Exception e) {
-            throw new RuntimeException("Failed to upload file to S3: " + e.getMessage());
+            returnMessageToSQS();
+            System.out.println("Failed to upload file to S3: " + e.getMessage());
         }
     }
 
 
+
+    private static void returnMessageToSQS() {
+        AWSinstance.getSqs().sendMessage(builder -> builder
+                .queueUrl(ManagerWorkerQueueName)
+                .messageBody(currentMessage.body())
+                );
+    }
 
     private static File analyseFile(File file, String analysisType, String taskId) {
         StanfordNLP nlp = StanfordNLP.getInstance();
